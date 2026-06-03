@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -12,13 +13,15 @@ import { InvitePage } from "./pages/invite";
 import { CallPage } from "./pages/call";
 import { AdminPage } from "./pages/admin";
 import { Layout } from "./components/layout";
+import { initWebSocket } from "./lib/websocket";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
+      staleTime: 20_000,
       gcTime: 5 * 60_000,
-      retry: 1,
+      retry: 2,
+      retryDelay: 1000,
       refetchOnWindowFocus: false,
     },
   },
@@ -52,6 +55,10 @@ function Router() {
 }
 
 function App() {
+  useEffect(() => {
+    initWebSocket();
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>

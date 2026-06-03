@@ -14,6 +14,8 @@ function formatUser(user: typeof usersTable.$inferSelect) {
     bio: user.bio,
     avatarUrl: user.avatarUrl,
     inviteCode: user.inviteCode,
+    isOnline: user.isOnline,
+    lastSeen: user.lastSeen ? user.lastSeen.toISOString() : null,
     createdAt: user.createdAt.toISOString(),
   };
 }

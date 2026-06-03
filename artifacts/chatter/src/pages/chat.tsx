@@ -3,7 +3,7 @@ import { useRoute, useLocation, Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGetConversation, useListMessages, useSendMessage } from "@workspace/api-client-react/generated/api";
 import { format, formatDistanceToNow } from "date-fns";
-import { ArrowLeft, Video, Send, Paperclip, MoreVertical, Trash2, FileText, X } from "lucide-react";
+import { ArrowLeft, Video, Send, Paperclip, MoreVertical, Trash2, FileText } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -15,24 +15,37 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "../lib/auth";
 import { getAuthToken } from "../lib/auth";
-import { useWebSocket } from "../lib/websocket";
+import { useWebSocket, sendWsMessage } from "../lib/websocket";
 
 export function ChatPage() {
   const [, params] = useRoute("/chats/:id");
   const conversationId = params?.id ? parseInt(params.id) : 0;
-  const [, setLocation] = useLocation();
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: conversation } = useGetConversation(conversationId);
+  const { data: conversation, refetch: refetchConvo } = useGetConversation(conversationId);
   const { data: messages, refetch: refetchMessages } = useListMessages(conversationId);
   const sendMessage = useSendMessage();
 
   const [content, setContent] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [uploadPreview, setUploadPreview] = useState<{ name: string; type: string } | null>(null);
+  const [uploadingName, setUploadingName] = useState("");
+  const [isOtherTyping, setIsOtherTyping] = useState(false);
+  const [otherOnline, setOtherOnline] = useState<boolean>(false);
+  const [otherLastSeen, setOtherLastSeen] = useState<string | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Set initial online status from conversation data
+  useEffect(() => {
+    if (conversation?.otherUser) {
+      const u = conversation.otherUser as any;
+      setOtherOnline(u.isOnline ?? false);
+      setOtherLastSeen(u.lastSeen ?? null);
+    }
+  }, [conversation]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
@@ -49,15 +62,53 @@ export function ChatPage() {
     if (event.type === "chat_cleared" && event.conversationId === conversationId) {
       refetchMessages();
     }
+    if (
+      event.type === "typing_start" &&
+      (event.conversationId as number) === conversationId &&
+      (event.userId as number) !== user?.id
+    ) {
+      setIsOtherTyping(true);
+    }
+    if (
+      event.type === "typing_stop" &&
+      (event.conversationId as number) === conversationId &&
+      (event.userId as number) !== user?.id
+    ) {
+      setIsOtherTyping(false);
+    }
+    if (event.type === "user_online" && (event.userId as number) === (conversation?.otherUser as any)?.id) {
+      setOtherOnline(true);
+    }
+    if (event.type === "user_offline" && (event.userId as number) === (conversation?.otherUser as any)?.id) {
+      setOtherOnline(false);
+      setOtherLastSeen((event.lastSeen as string) ?? null);
+    }
   });
+
+  const handleTyping = (value: string) => {
+    setContent(value);
+    sendWsMessage({ type: "typing_start", conversationId });
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(() => {
+      sendWsMessage({ type: "typing_stop", conversationId });
+    }, 3000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      sendWsMessage({ type: "typing_stop", conversationId });
+    };
+  }, [conversationId]);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!content.trim()) return;
-    sendMessage.mutate(
-      { conversationId, data: { content: content.trim(), messageType: "text" } },
-      { onSuccess: () => setContent("") }
-    );
+    const text = content.trim();
+    setContent("");
+    sendWsMessage({ type: "typing_stop", conversationId });
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    sendMessage.mutate({ conversationId, data: { content: text, messageType: "text" } });
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -65,47 +116,37 @@ export function ChatPage() {
     if (!file) return;
     e.target.value = "";
 
-    const isImage = file.type.startsWith("image/");
-    const isVideo = file.type.startsWith("video/");
-    const isPdf = file.type === "application/pdf";
-
     setUploading(true);
-    setUploadPreview({ name: file.name, type: file.type });
+    setUploadingName(file.name);
 
     try {
       const formData = new FormData();
       formData.append("file", file);
-
       const token = getAuthToken();
       const res = await fetch("/api/upload", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
-
       if (!res.ok) throw new Error("Upload failed");
       const data = await res.json();
 
-      let msgType = "file";
-      if (isImage) msgType = "image";
-      else if (isVideo) msgType = "video";
-      else if (isPdf) msgType = "pdf";
-
-      const msgContent = msgType === "image" || msgType === "video"
-        ? data.url
-        : `${file.name}||${data.url}`;
+      const isImage = file.type.startsWith("image/");
+      const isVideo = file.type.startsWith("video/");
+      const msgType = isImage ? "image" : isVideo ? "video" : "file";
+      const msgContent = isImage || isVideo ? data.url : `${file.name}||${data.url}`;
 
       sendMessage.mutate({ conversationId, data: { content: msgContent, messageType: msgType } });
     } catch {
       alert("File upload failed. Please try again.");
     } finally {
       setUploading(false);
-      setUploadPreview(null);
+      setUploadingName("");
     }
   };
 
   const handleClearChat = async () => {
-    if (!confirm("Clear all messages in this chat?")) return;
+    if (!confirm("Delete all messages in this chat?")) return;
     const token = getAuthToken();
     await fetch(`/api/conversations/${conversationId}/messages`, {
       method: "DELETE",
@@ -122,38 +163,62 @@ export function ChatPage() {
     );
   }
 
-  const otherUser = conversation.otherUser;
+  const otherUser = conversation.otherUser as any;
+
+  const statusText = isOtherTyping
+    ? "typing..."
+    : otherOnline
+    ? "Online"
+    : otherLastSeen
+    ? `Last seen ${formatDistanceToNow(new Date(otherLastSeen), { addSuffix: true })}`
+    : "Offline";
+
+  const statusColor = isOtherTyping
+    ? "text-primary"
+    : otherOnline
+    ? "text-green-400"
+    : "text-muted-foreground";
 
   return (
     <div className="flex flex-col h-full bg-background">
-      <header className="px-3 py-3 flex items-center justify-between sticky top-0 bg-background/95 backdrop-blur-sm z-10 border-b border-border">
+      <header className="px-3 py-2.5 flex items-center justify-between sticky top-0 bg-background/95 backdrop-blur-sm z-10 border-b border-border">
         <div className="flex items-center gap-2 min-w-0">
           <Link href="/chats">
-            <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground flex-shrink-0 h-9 w-9">
+            <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground h-9 w-9 flex-shrink-0">
               <ArrowLeft size={18} />
             </Button>
           </Link>
-          <Avatar className="h-9 w-9 flex-shrink-0">
-            <AvatarImage src={otherUser.avatarUrl || undefined} />
-            <AvatarFallback className="bg-primary/20 text-primary text-sm">
-              {(otherUser.displayName?.[0] || otherUser.username[0]).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
+          <div className="relative flex-shrink-0">
+            <Avatar className="h-9 w-9">
+              <AvatarImage src={otherUser.avatarUrl || undefined} />
+              <AvatarFallback className="bg-primary/20 text-primary text-sm">
+                {(otherUser.displayName?.[0] || otherUser.username[0]).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <div
+              className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-background ${
+                otherOnline ? "bg-green-400" : "bg-zinc-500"
+              }`}
+            />
+          </div>
           <div className="min-w-0">
-            <h2 className="font-semibold text-foreground truncate text-sm">
+            <h2 className="font-semibold text-foreground text-sm leading-tight truncate">
               {otherUser.displayName || otherUser.username}
             </h2>
+            <p className={`text-[11px] leading-tight truncate ${statusColor}`}>
+              {statusText}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="flex items-center gap-0.5 flex-shrink-0">
           <Link href={`/call/${conversationId}`}>
-            <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground h-9 w-9">
+            <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground h-9 w-9">
               <Video size={18} />
             </Button>
           </Link>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground h-9 w-9">
+              <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground h-9 w-9">
                 <MoreVertical size={18} />
               </Button>
             </DropdownMenuTrigger>
@@ -162,7 +227,7 @@ export function ChatPage() {
                 onClick={handleClearChat}
                 className="text-destructive focus:text-destructive cursor-pointer gap-2"
               >
-                <Trash2 size={16} />
+                <Trash2 size={15} />
                 Clear Chat
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -170,22 +235,22 @@ export function ChatPage() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
         {messages?.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-16">
-            <p className="text-sm">No messages yet. Say hi!</p>
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-12">
+            <p className="text-sm">No messages yet. Say hi! 👋</p>
           </div>
         )}
         {messages?.map((msg, index) => {
+          const prevMsg = messages[index - 1];
           const showTime =
-            index === 0 ||
-            new Date(msg.createdAt).getTime() - new Date(messages[index - 1].createdAt).getTime() >
-              5 * 60 * 1000;
+            !prevMsg ||
+            new Date(msg.createdAt).getTime() - new Date(prevMsg.createdAt).getTime() > 5 * 60 * 1000;
 
           return (
             <div key={msg.id} className={`flex flex-col ${msg.isOwn ? "items-end" : "items-start"}`}>
               {showTime && (
-                <span className="text-[10px] text-muted-foreground my-3 self-center px-3 py-1 bg-secondary/60 rounded-full">
+                <span className="text-[10px] text-muted-foreground my-2 self-center px-3 py-0.5 bg-secondary/50 rounded-full">
                   {format(new Date(msg.createdAt), "h:mm a")}
                 </span>
               )}
@@ -210,7 +275,7 @@ export function ChatPage() {
                     className="max-w-[220px] max-h-[180px] block"
                     preload="metadata"
                   />
-                ) : msg.messageType === "pdf" || msg.messageType === "file" ? (
+                ) : msg.messageType === "file" ? (
                   (() => {
                     const [name, url] = msg.content.split("||");
                     return (
@@ -220,26 +285,36 @@ export function ChatPage() {
                         rel="noopener noreferrer"
                         className="flex items-center gap-2 px-4 py-3 hover:opacity-80"
                       >
-                        <FileText size={20} className="flex-shrink-0" />
+                        <FileText size={18} className="flex-shrink-0" />
                         <span className="text-sm truncate max-w-[150px]">{name || "File"}</span>
                       </a>
                     );
                   })()
                 ) : (
-                  <p className="px-4 py-2.5 leading-relaxed text-[15px]">{msg.content}</p>
+                  <p className="px-4 py-2.5 leading-relaxed text-[15px] break-words">{msg.content}</p>
                 )}
               </div>
             </div>
           );
         })}
+
+        {isOtherTyping && (
+          <div className="flex items-start">
+            <div className="bg-secondary rounded-2xl rounded-tl-sm px-4 py-3 flex gap-1 items-center">
+              <div className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:0ms]" />
+              <div className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:150ms]" />
+              <div className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:300ms]" />
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
-      {uploadPreview && (
-        <div className="px-3 py-2 bg-secondary/50 border-t border-border flex items-center gap-2">
-          <Paperclip size={14} className="text-muted-foreground" />
-          <span className="text-sm text-muted-foreground truncate flex-1">{uploadPreview.name}</span>
-          {uploading && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary" />}
+      {uploading && (
+        <div className="px-3 py-2 bg-secondary/40 border-t border-border flex items-center gap-2">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary flex-shrink-0" />
+          <span className="text-xs text-muted-foreground truncate">Uploading {uploadingName}…</span>
         </div>
       )}
 
@@ -256,7 +331,7 @@ export function ChatPage() {
             type="button"
             variant="ghost"
             size="icon"
-            className="rounded-full text-muted-foreground hover:text-primary flex-shrink-0 h-11 w-11"
+            className="rounded-full text-muted-foreground hover:text-primary h-11 w-11 flex-shrink-0"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
           >
@@ -264,7 +339,7 @@ export function ChatPage() {
           </Button>
           <Input
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={(e) => handleTyping(e.target.value)}
             placeholder="Type a message..."
             className="flex-1 rounded-full bg-secondary border-0 px-4 h-11 text-[15px]"
             onKeyDown={(e) => {

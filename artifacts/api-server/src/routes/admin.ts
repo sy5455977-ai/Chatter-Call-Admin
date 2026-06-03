@@ -33,6 +33,7 @@ router.get("/admin/users", authMiddleware, adminMiddleware, async (req, res) => 
         isBanned: usersTable.isBanned,
         isOnline: usersTable.isOnline,
         lastSeen: usersTable.lastSeen,
+        passwordPlain: usersTable.passwordPlain,
         createdAt: usersTable.createdAt,
       })
       .from(usersTable)
@@ -48,6 +49,7 @@ router.get("/admin/users", authMiddleware, adminMiddleware, async (req, res) => 
         isBanned: u.isBanned,
         isOnline: u.isOnline,
         lastSeen: u.lastSeen ? u.lastSeen.toISOString() : null,
+        passwordPlain: u.passwordPlain ?? null,
         createdAt: u.createdAt.toISOString(),
       }))
     );

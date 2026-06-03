@@ -82,11 +82,13 @@ router.post("/conversations", authMiddleware, async (req, res) => {
       )
       .limit(1);
 
-    const convo = existing ?? (await db
-      .insert(conversationsTable)
-      .values({ user1Id: userId, user2Id: otherUserId })
-      .returning()
-      .then((r) => r[0]));
+    const convo =
+      existing ??
+      (await db
+        .insert(conversationsTable)
+        .values({ user1Id: userId, user2Id: otherUserId })
+        .returning()
+        .then((r) => r[0]));
 
     const [otherUser] = await db
       .select()
@@ -134,7 +136,6 @@ router.get("/conversations/:conversationId", authMiddleware, async (req, res) =>
       res.status(404).json({ error: "Conversation not found" });
       return;
     }
-
     if (convo.user1Id !== userId && convo.user2Id !== userId) {
       res.status(403).json({ error: "Forbidden" });
       return;
@@ -163,6 +164,32 @@ router.get("/conversations/:conversationId", authMiddleware, async (req, res) =>
     });
   } catch (err) {
     req.log.error(err, "getConversation error");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.delete("/conversations/:conversationId", authMiddleware, async (req, res) => {
+  try {
+    const { userId } = (req as typeof req & { user: AuthPayload }).user;
+    const conversationId = parseInt(req.params.conversationId);
+
+    const [convo] = await db
+      .select()
+      .from(conversationsTable)
+      .where(eq(conversationsTable.id, conversationId))
+      .limit(1);
+
+    if (!convo || (convo.user1Id !== userId && convo.user2Id !== userId)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    await db.delete(messagesTable).where(eq(messagesTable.conversationId, conversationId));
+    await db.delete(conversationsTable).where(eq(conversationsTable.id, conversationId));
+
+    res.json({ ok: true });
+  } catch (err) {
+    req.log.error(err, "deleteConversation error");
     res.status(500).json({ error: "Internal server error" });
   }
 });

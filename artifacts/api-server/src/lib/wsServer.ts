@@ -17,6 +17,15 @@ export function getOnlineUserIds(): number[] {
   return Array.from(clients.values()).map((c) => c.userId);
 }
 
+function broadcastAll(data: object) {
+  const payload = JSON.stringify(data);
+  for (const [, client] of clients) {
+    if (client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(payload);
+    }
+  }
+}
+
 export function setupWebSocketServer(server: Server) {
   const wss = new WebSocketServer({ server, path: "/ws" });
 
@@ -34,18 +43,45 @@ export function setupWebSocketServer(server: Server) {
     clients.set(ws, client);
     logger.info({ userId: payload.userId }, "WS client connected");
 
-    await db
-      .update(usersTable)
-      .set({ isOnline: true })
-      .where(eq(usersTable.id, payload.userId));
+    try {
+      await db
+        .update(usersTable)
+        .set({ isOnline: true })
+        .where(eq(usersTable.id, payload.userId));
+    } catch {}
+
+    broadcastAll({ type: "user_online", userId: payload.userId });
+
+    ws.on("message", (rawData) => {
+      try {
+        const msg = JSON.parse(rawData.toString());
+        if (msg.type === "typing_start" || msg.type === "typing_stop") {
+          broadcastAll({
+            type: msg.type,
+            conversationId: msg.conversationId,
+            userId: payload.userId,
+          });
+        }
+      } catch {}
+    });
 
     ws.on("close", async () => {
       clients.delete(ws);
       logger.info({ userId: payload.userId }, "WS client disconnected");
-      await db
-        .update(usersTable)
-        .set({ isOnline: false, lastSeen: new Date() })
-        .where(eq(usersTable.id, payload.userId));
+
+      const lastSeen = new Date();
+      try {
+        await db
+          .update(usersTable)
+          .set({ isOnline: false, lastSeen })
+          .where(eq(usersTable.id, payload.userId));
+      } catch {}
+
+      broadcastAll({
+        type: "user_offline",
+        userId: payload.userId,
+        lastSeen: lastSeen.toISOString(),
+      });
     });
 
     ws.on("error", (err) => {
@@ -56,10 +92,7 @@ export function setupWebSocketServer(server: Server) {
   return wss;
 }
 
-export function broadcastToConversation(
-  conversationId: number,
-  data: object
-) {
+export function broadcastToConversation(conversationId: number, data: object) {
   const payload = JSON.stringify(data);
   for (const [, client] of clients) {
     if (client.ws.readyState === WebSocket.OPEN) {
