@@ -10,9 +10,19 @@ import { ChatPage } from "./pages/chat";
 import { ProfilePage } from "./pages/profile";
 import { InvitePage } from "./pages/invite";
 import { CallPage } from "./pages/call";
+import { AdminPage } from "./pages/admin";
 import { Layout } from "./components/layout";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      gcTime: 5 * 60_000,
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 function Router() {
   return (
@@ -32,6 +42,9 @@ function Router() {
       </Route>
       <Route path="/call/:id">
         <CallPage />
+      </Route>
+      <Route path="/admin">
+        <AdminPage />
       </Route>
       <Route component={NotFound} />
     </Switch>

@@ -3,7 +3,7 @@ import { useLocation, Link } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Camera, LogOut, UserPlus, Settings, AtSign } from "lucide-react";
+import { Camera, LogOut, UserPlus, Settings, AtSign, ShieldAlert } from "lucide-react";
 import { useGetMe, useUpdateProfile, useLogout } from "@workspace/api-client-react/generated/api";
 import { clearAuthToken, clearAuthUser, useAuth } from "../lib/auth";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -24,13 +24,13 @@ export function ProfilePage() {
   const updateProfile = useUpdateProfile();
   const logoutMut = useLogout();
   const { toast } = useToast();
+  const { user } = useAuth();
+
+  const isAdmin = (me as any)?.isAdmin === true || user?.isAdmin === true;
 
   const form = useForm<z.infer<typeof profileSchema>>({
     resolver: zodResolver(profileSchema),
-    defaultValues: {
-      displayName: "",
-      bio: "",
-    },
+    defaultValues: { displayName: "", bio: "" },
   });
 
   useEffect(() => {
@@ -47,10 +47,7 @@ export function ProfilePage() {
       { data: values },
       {
         onSuccess: () => {
-          toast({
-            title: "Profile updated",
-            description: "Your profile has been saved successfully.",
-          });
+          toast({ title: "Profile updated", description: "Saved successfully." });
         },
       }
     );
@@ -58,17 +55,8 @@ export function ProfilePage() {
 
   const handleLogout = () => {
     logoutMut.mutate(undefined, {
-      onSuccess: () => {
-        clearAuthToken();
-        clearAuthUser();
-        setLocation("/");
-      },
-      onError: () => {
-        // Fallback clear if api fails
-        clearAuthToken();
-        clearAuthUser();
-        setLocation("/");
-      }
+      onSuccess: () => { clearAuthToken(); clearAuthUser(); setLocation("/"); },
+      onError: () => { clearAuthToken(); clearAuthUser(); setLocation("/"); },
     });
   };
 
@@ -91,7 +79,7 @@ export function ProfilePage() {
             <Avatar className="h-28 w-28 border-4 border-background shadow-lg">
               <AvatarImage src={me.avatarUrl || undefined} />
               <AvatarFallback className="bg-primary/20 text-primary text-3xl">
-                {me.displayName?.[0] || me.username[0]}
+                {(me.displayName?.[0] || me.username[0]).toUpperCase()}
               </AvatarFallback>
             </Avatar>
             <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -102,6 +90,18 @@ export function ProfilePage() {
           <p className="text-muted-foreground flex items-center gap-1 mt-1">
             <AtSign size={14} /> {me.username}
           </p>
+
+          {isAdmin && (
+            <Link href="/admin">
+              <Button
+                className="mt-4 px-6 py-2 rounded-xl font-bold text-white text-base shadow-lg"
+                style={{ backgroundColor: "#dc2626" }}
+              >
+                <ShieldAlert size={18} className="mr-2" />
+                Admin
+              </Button>
+            </Link>
+          )}
         </div>
 
         <Form {...form}>
@@ -111,7 +111,7 @@ export function ProfilePage() {
                 <Settings size={16} />
                 <span>Settings</span>
               </div>
-              
+
               <FormField
                 control={form.control}
                 name="displayName"
@@ -125,7 +125,7 @@ export function ProfilePage() {
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="bio"
@@ -133,19 +133,19 @@ export function ProfilePage() {
                   <FormItem>
                     <FormLabel>Bio</FormLabel>
                     <FormControl>
-                      <Textarea 
-                        placeholder="A little about yourself..." 
-                        className="resize-none bg-secondary border-0 min-h-[100px]" 
-                        {...field} 
+                      <Textarea
+                        placeholder="A little about yourself..."
+                        className="resize-none bg-secondary border-0 min-h-[100px]"
+                        {...field}
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              
-              <Button 
-                type="submit" 
+
+              <Button
+                type="submit"
                 className="w-full rounded-xl py-6 mt-4 font-medium"
                 disabled={updateProfile.isPending}
               >
@@ -156,8 +156,8 @@ export function ProfilePage() {
         </Form>
 
         <div className="mt-8">
-          <Button 
-            variant="ghost" 
+          <Button
+            variant="ghost"
             onClick={handleLogout}
             className="w-full py-6 text-destructive hover:text-destructive hover:bg-destructive/10 rounded-xl"
             disabled={logoutMut.isPending}

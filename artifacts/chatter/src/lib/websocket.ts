@@ -1,11 +1,16 @@
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { getGetConversationsQueryKey, getListMessagesQueryKey } from '@workspace/api-client-react/generated/api';
+import { getGetConversationsQueryKey } from '@workspace/api-client-react/generated/api';
 import { getAuthToken } from './auth';
 
-export function useWebSocket() {
+type WsEvent = Record<string, unknown> & { type: string };
+type WsCallback = (event: WsEvent) => void;
+
+export function useWebSocket(onMessage?: WsCallback) {
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
+  const callbackRef = useRef<WsCallback | undefined>(onMessage);
+  callbackRef.current = onMessage;
 
   useEffect(() => {
     const token = getAuthToken();
@@ -19,21 +24,22 @@ export function useWebSocket() {
 
     ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
+        const data: WsEvent = JSON.parse(event.data);
+
+        if (callbackRef.current) {
+          callbackRef.current(data);
+        }
+
         if (data.type === 'new_message') {
           queryClient.invalidateQueries({ queryKey: getGetConversationsQueryKey() });
-          // If we have conversationId in the event, we could invalidate specific ones,
-          // but for now we'll just invalidate all list messages to be safe.
           queryClient.invalidateQueries({ queryKey: ['/api/conversations'] });
         }
-      } catch (e) {
-        console.error('Error parsing ws message', e);
+      } catch {
+        // ignore parse errors
       }
     };
 
-    ws.onclose = () => {
-      console.log('WebSocket disconnected');
-    };
+    ws.onclose = () => {};
 
     return () => {
       ws.close();
