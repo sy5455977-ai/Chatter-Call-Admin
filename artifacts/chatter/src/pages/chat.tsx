@@ -211,7 +211,7 @@ export function ChatPage() {
           </div>
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
-          <Link href={`/call/${conversationId}`}>
+          <Link href={`/call/${conversationId}?caller=1`}>
             <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground h-9 w-9">
               <Video size={18} />
             </Button>

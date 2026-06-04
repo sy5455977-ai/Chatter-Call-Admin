@@ -1,7 +1,12 @@
 import { useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { useGetConversations, useSearchUsers, useCreateConversation } from "@workspace/api-client-react/generated/api";
+import {
+  useGetConversations,
+  useSearchUsers,
+  useCreateConversation,
+  getSearchUsersQueryKey,
+} from "@workspace/api-client-react/generated/api";
 import { formatDistanceToNow } from "date-fns";
 import { Search, Plus, MessageCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -24,7 +29,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useAuth } from "../lib/auth";
 import { getAuthToken } from "../lib/auth";
 import { useWebSocket } from "../lib/websocket";
 
@@ -33,20 +37,26 @@ export function ChatsPage() {
   const queryClient = useQueryClient();
   const { data: conversations, isLoading, refetch } = useGetConversations();
   const [searchQuery, setSearchQuery] = useState("");
-  const { data: searchResults } = useSearchUsers(
-    { q: searchQuery },
-    { query: { enabled: searchQuery.length > 0 } }
-  );
-  const createConversation = useCreateConversation();
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [deleteConvId, setDeleteConvId] = useState<number | null>(null);
-  const [deleteName, setDeleteName] = useState("");
+  const [isSearchOpen, setIsSearchOpen]   = useState(false);
+  const [deleteConvId, setDeleteConvId]   = useState<number | null>(null);
+  const [deleteName, setDeleteName]       = useState("");
   const longPressTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
-  useWebSocket((event) => {
-    if (event.type === "new_message") {
-      refetch();
+  // Search – enabled only when there's a query; use "as any" to satisfy strict TQ v5 queryKey requirement
+  const { data: searchResults } = useSearchUsers(
+    { q: searchQuery },
+    {
+      query: {
+        enabled: searchQuery.length > 0,
+        queryKey: getSearchUsersQueryKey({ q: searchQuery }),
+      },
     }
+  );
+
+  const createConversation = useCreateConversation();
+
+  useWebSocket((event) => {
+    if (event.type === "new_message") refetch();
   });
 
   const handleStartChat = (userId: number) => {
@@ -95,11 +105,7 @@ export function ChatsPage() {
 
         <Dialog open={isSearchOpen} onOpenChange={setIsSearchOpen}>
           <DialogTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary"
-            >
+            <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary">
               <Plus size={24} />
             </Button>
           </DialogTrigger>
@@ -114,6 +120,7 @@ export function ChatsPage() {
                 className="pl-9 bg-secondary border-0 rounded-full"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                autoFocus
               />
             </div>
             <div className="mt-4 space-y-2 max-h-60 overflow-y-auto">
@@ -144,8 +151,11 @@ export function ChatsPage() {
                   </div>
                 </div>
               ))}
-              {searchQuery && searchResults?.length === 0 && (
+              {searchQuery && !searchResults?.length && (
                 <p className="text-center text-sm text-muted-foreground py-4">No users found</p>
+              )}
+              {!searchQuery && (
+                <p className="text-center text-sm text-muted-foreground py-4">Type a username to search</p>
               )}
             </div>
           </DialogContent>
@@ -158,15 +168,15 @@ export function ChatsPage() {
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
           </div>
         ) : conversations?.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <MessageCircle className="h-12 w-12 mb-4 opacity-20" />
-            <p>No messages yet.</p>
-            <p className="text-sm">Tap the + to start a chat.</p>
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
+            <MessageCircle className="h-12 w-12 opacity-20" />
+            <p className="font-medium">No conversations yet</p>
+            <p className="text-sm text-center">Tap + to search for users,<br/>or share your invite link.</p>
           </div>
         ) : (
           <div className="space-y-1">
             {conversations?.map((conv) => {
-              const name = conv.otherUser.displayName || conv.otherUser.username;
+              const name     = conv.otherUser.displayName || conv.otherUser.username;
               const isOnline = (conv.otherUser as any).isOnline;
 
               return (
@@ -199,7 +209,7 @@ export function ChatsPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-0.5">
-                          <h3 className="font-medium text-foreground truncate text-[15px]">{name}</h3>
+                          <h3 className="font-semibold text-foreground truncate text-[15px]">{name}</h3>
                           {conv.lastMessageAt && (
                             <span className="text-xs text-muted-foreground whitespace-nowrap ml-2">
                               {formatDistanceToNow(new Date(conv.lastMessageAt), { addSuffix: false })}
@@ -208,8 +218,8 @@ export function ChatsPage() {
                         </div>
                         <p className="text-sm text-muted-foreground truncate">
                           {conv.lastMessage
-                            ? conv.lastMessage.length > 40
-                              ? conv.lastMessage.slice(0, 40) + "…"
+                            ? conv.lastMessage.length > 42
+                              ? conv.lastMessage.slice(0, 42) + "…"
                               : conv.lastMessage
                             : "Tap to start chatting"}
                         </p>
@@ -228,16 +238,13 @@ export function ChatsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Chat?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete your conversation with{" "}
+              Permanently delete your conversation with{" "}
               <span className="font-semibold text-foreground">{deleteName}</span> and all messages.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="bg-secondary border-0">Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteConversation}
-              className="bg-destructive hover:bg-destructive/90"
-            >
+            <AlertDialogAction onClick={handleDeleteConversation} className="bg-destructive hover:bg-destructive/90">
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
