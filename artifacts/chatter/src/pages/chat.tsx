@@ -3,7 +3,7 @@ import { useRoute, useLocation, Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGetConversation, useListMessages, useSendMessage } from "@workspace/api-client-react/generated/api";
 import { format, formatDistanceToNow } from "date-fns";
-import { ArrowLeft, Video, Send, Paperclip, MoreVertical, Trash2, FileText } from "lucide-react";
+import { ArrowLeft, Video, Phone, Send, Paperclip, MoreVertical, Trash2, FileText, Check, CheckCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -33,6 +33,7 @@ export function ChatPage() {
   const [isOtherTyping, setIsOtherTyping] = useState(false);
   const [otherOnline, setOtherOnline] = useState<boolean>(false);
   const [otherLastSeen, setOtherLastSeen] = useState<string | null>(null);
+  const [seenMessageIds, setSeenMessageIds] = useState<Set<number>>(new Set());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -47,6 +48,17 @@ export function ChatPage() {
     }
   }, [conversation]);
 
+  // Build seen set from messages
+  useEffect(() => {
+    if (messages) {
+      const seen = new Set<number>();
+      messages.forEach((m: any) => {
+        if (m.isOwn && m.seenAt) seen.add(m.id);
+      });
+      setSeenMessageIds(seen);
+    }
+  }, [messages]);
+
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
   }, []);
@@ -60,7 +72,11 @@ export function ChatPage() {
       refetchMessages();
     }
     if (event.type === "chat_cleared" && event.conversationId === conversationId) {
-      refetchMessages();
+      const ev = event as any;
+      // Only clear for the user who requested it
+      if (ev.clearedBy === user?.id) {
+        refetchMessages();
+      }
     }
     if (
       event.type === "typing_start" &&
@@ -82,6 +98,17 @@ export function ChatPage() {
     if (event.type === "user_offline" && (event.userId as number) === (conversation?.otherUser as any)?.id) {
       setOtherOnline(false);
       setOtherLastSeen((event.lastSeen as string) ?? null);
+    }
+    // Read receipts: when the other user reads our messages
+    if (event.type === "messages_seen" && (event.conversationId as number) === conversationId) {
+      const ev = event as any;
+      if (ev.seenBy !== user?.id) {
+        setSeenMessageIds((prev) => {
+          const next = new Set(prev);
+          (ev.messageIds as number[]).forEach((id: number) => next.add(id));
+          return next;
+        });
+      }
     }
   });
 
@@ -211,6 +238,13 @@ export function ChatPage() {
           </div>
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
+          {/* Voice call icon */}
+          <Link href={`/call/${conversationId}?caller=1&mode=voice`}>
+            <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground h-9 w-9">
+              <Phone size={17} />
+            </Button>
+          </Link>
+          {/* Video call icon */}
           <Link href={`/call/${conversationId}?caller=1`}>
             <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground h-9 w-9">
               <Video size={18} />
@@ -241,11 +275,13 @@ export function ChatPage() {
             <p className="text-sm">No messages yet. Say hi! 👋</p>
           </div>
         )}
-        {messages?.map((msg, index) => {
-          const prevMsg = messages[index - 1];
+        {messages?.map((msg: any, index: number) => {
+          const prevMsg = (messages as any[])[index - 1];
           const showTime =
             !prevMsg ||
             new Date(msg.createdAt).getTime() - new Date(prevMsg.createdAt).getTime() > 5 * 60 * 1000;
+
+          const isSeen = seenMessageIds.has(msg.id) || !!msg.seenAt;
 
           return (
             <div key={msg.id} className={`flex flex-col ${msg.isOwn ? "items-end" : "items-start"}`}>
@@ -294,6 +330,16 @@ export function ChatPage() {
                   <p className="px-4 py-2.5 leading-relaxed text-[15px] break-words">{msg.content}</p>
                 )}
               </div>
+              {/* Read receipts — only for own messages */}
+              {msg.isOwn && (
+                <div className="mt-0.5 mr-1 flex items-center">
+                  {isSeen ? (
+                    <CheckCheck size={13} className="text-blue-400" />
+                  ) : (
+                    <Check size={13} className="text-muted-foreground/60" />
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

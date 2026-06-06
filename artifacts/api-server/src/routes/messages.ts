@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, messagesTable, conversationsTable, dailyStatsTable } from "@workspace/db";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and, gt, isNull, or } from "drizzle-orm";
 import { authMiddleware } from "../middlewares/auth";
 import type { AuthPayload } from "../middlewares/auth";
 import { broadcastToConversation } from "../lib/wsServer";
@@ -23,12 +23,52 @@ router.get("/conversations/:conversationId/messages", authMiddleware, async (req
       return;
     }
 
+    // Determine this user's clearedAt (WhatsApp-style: each user clears independently)
+    const isUser1 = convo.user1Id === userId;
+    const clearedAt = isUser1 ? convo.user1ClearedAt : convo.user2ClearedAt;
+
+    let query = db
+      .select()
+      .from(messagesTable)
+      .where(eq(messagesTable.conversationId, conversationId));
+
     const messages = await db
       .select()
       .from(messagesTable)
-      .where(eq(messagesTable.conversationId, conversationId))
+      .where(
+        clearedAt
+          ? and(
+              eq(messagesTable.conversationId, conversationId),
+              gt(messagesTable.createdAt, clearedAt)
+            )
+          : eq(messagesTable.conversationId, conversationId)
+      )
       .orderBy(desc(messagesTable.createdAt))
       .limit(100);
+
+    // Mark messages from the other user as seen
+    const otherUserId = isUser1 ? convo.user2Id : convo.user1Id;
+    const unseenIds = messages
+      .filter((m) => m.senderId === otherUserId && !m.seenAt)
+      .map((m) => m.id);
+
+    if (unseenIds.length > 0) {
+      const now = new Date();
+      for (const msgId of unseenIds) {
+        await db
+          .update(messagesTable)
+          .set({ seenAt: now })
+          .where(eq(messagesTable.id, msgId));
+      }
+      // Notify sender their messages were seen
+      broadcastToConversation(conversationId, {
+        type: "messages_seen",
+        conversationId,
+        seenBy: userId,
+        messageIds: unseenIds,
+        seenAt: now.toISOString(),
+      });
+    }
 
     res.json(
       messages.reverse().map((m) => ({
@@ -38,6 +78,7 @@ router.get("/conversations/:conversationId/messages", authMiddleware, async (req
         content: m.content,
         messageType: m.messageType,
         createdAt: m.createdAt.toISOString(),
+        seenAt: m.seenAt?.toISOString() ?? null,
         isOwn: m.senderId === userId,
       }))
     );
@@ -90,6 +131,7 @@ router.post("/conversations/:conversationId/messages", authMiddleware, async (re
       content: msg.content,
       messageType: msg.messageType,
       createdAt: msg.createdAt.toISOString(),
+      seenAt: null,
       isOwn: true,
     };
 
@@ -106,6 +148,7 @@ router.post("/conversations/:conversationId/messages", authMiddleware, async (re
   }
 });
 
+// Clear chat only for the requesting user (WhatsApp style)
 router.delete("/conversations/:conversationId/messages", authMiddleware, async (req, res) => {
   try {
     const { userId } = (req as typeof req & { user: AuthPayload }).user;
@@ -122,9 +165,24 @@ router.delete("/conversations/:conversationId/messages", authMiddleware, async (
       return;
     }
 
-    await db.delete(messagesTable).where(eq(messagesTable.conversationId, conversationId));
+    const isUser1 = convo.user1Id === userId;
+    const now = new Date();
 
-    broadcastToConversation(conversationId, { type: "chat_cleared", conversationId });
+    // Only set the cleared timestamp for this user — the other user still sees messages
+    if (isUser1) {
+      await db
+        .update(conversationsTable)
+        .set({ user1ClearedAt: now })
+        .where(eq(conversationsTable.id, conversationId));
+    } else {
+      await db
+        .update(conversationsTable)
+        .set({ user2ClearedAt: now })
+        .where(eq(conversationsTable.id, conversationId));
+    }
+
+    // Only broadcast to this user's socket connections
+    broadcastToConversation(conversationId, { type: "chat_cleared", conversationId, clearedBy: userId });
 
     res.json({ ok: true });
   } catch (err) {

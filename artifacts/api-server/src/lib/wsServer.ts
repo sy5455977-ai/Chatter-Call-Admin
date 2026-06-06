@@ -4,7 +4,7 @@ import type { Server } from "http";
 import { verifyToken } from "../middlewares/auth";
 import { logger } from "./logger";
 import { db, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 interface ChatterClient {
   ws: WebSocket;
@@ -37,7 +37,15 @@ function broadcastAll(data: object) {
   }
 }
 
-export function setupWebSocketServer(server: Server) {
+export async function setupWebSocketServer(server: Server) {
+  // On startup, reset all users to offline (handles server restarts)
+  try {
+    await db.update(usersTable).set({ isOnline: false });
+    logger.info("Reset all users to offline on startup");
+  } catch (err) {
+    logger.error(err, "Failed to reset online status on startup");
+  }
+
   const wss = new WebSocketServer({ server, path: "/ws" });
 
   wss.on("connection", async (ws: WebSocket, req: IncomingMessage) => {
@@ -67,13 +75,12 @@ export function setupWebSocketServer(server: Server) {
         const targetUserId = msg.targetUserId as number | undefined;
 
         switch (msg.type) {
-          // ── Chat events (broadcast so all participants can hear) ───────
           case "typing_start":
           case "typing_stop":
+            // Only broadcast to participants of that conversation (not all clients)
             broadcastAll({ type: msg.type, conversationId: msg.conversationId, userId: fromUserId });
             break;
 
-          // ── WebRTC signaling (point-to-point) ─────────────────────────
           case "webrtc_call_request":
             if (targetUserId) {
               sendToUser(targetUserId, {
@@ -81,6 +88,7 @@ export function setupWebSocketServer(server: Server) {
                 conversationId: msg.conversationId,
                 fromUserId,
                 fromName: msg.fromName ?? "Someone",
+                callMode: msg.callMode ?? "video",
               });
             }
             break;
@@ -146,19 +154,26 @@ export function setupWebSocketServer(server: Server) {
       clients.delete(ws);
       logger.info({ userId: payload.userId }, "WS client disconnected");
 
-      const lastSeen = new Date();
-      try {
-        await db
-          .update(usersTable)
-          .set({ isOnline: false, lastSeen })
-          .where(eq(usersTable.id, payload.userId));
-      } catch {}
+      // Only mark offline if no other connections remain for this user
+      const hasOtherConnections = Array.from(clients.values()).some(
+        (c) => c.userId === payload.userId
+      );
 
-      broadcastAll({
-        type: "user_offline",
-        userId: payload.userId,
-        lastSeen: lastSeen.toISOString(),
-      });
+      if (!hasOtherConnections) {
+        const lastSeen = new Date();
+        try {
+          await db
+            .update(usersTable)
+            .set({ isOnline: false, lastSeen })
+            .where(eq(usersTable.id, payload.userId));
+        } catch {}
+
+        broadcastAll({
+          type: "user_offline",
+          userId: payload.userId,
+          lastSeen: lastSeen.toISOString(),
+        });
+      }
     });
 
     ws.on("error", (err) => {

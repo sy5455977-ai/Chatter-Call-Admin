@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { ArrowLeft, Users, BarChart3, ShieldOff, Shield, Wifi, WifiOff, Clock, RefreshCw } from "lucide-react";
+import { ArrowLeft, BarChart3, ShieldOff, Shield, Wifi, WifiOff, RefreshCw, Eye, EyeOff } from "lucide-react";
 import {
   BarChart,
   Bar,
@@ -47,11 +47,11 @@ export function AdminPage() {
   const [tab, setTab] = useState<"users" | "stats">("users");
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [showPassFor, setShowPassFor] = useState<Set<number>>(new Set());
+  const [searchQ, setSearchQ] = useState("");
 
   const fetchData = async (silent = false) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
-
     const token = getAuthToken();
     const headers = { Authorization: `Bearer ${token}` };
     try {
@@ -68,18 +68,14 @@ export function AdminPage() {
   };
 
   useEffect(() => {
-    if (!user?.isAdmin) {
-      setLocation("/profile");
-      return;
-    }
+    if (!user?.isAdmin) { setLocation("/profile"); return; }
     fetchData();
   }, [user]);
 
   const handleBan = async (userId: number, isBanned: boolean) => {
     setActionLoading(userId);
     const token = getAuthToken();
-    const endpoint = isBanned ? "unban" : "ban";
-    await fetch(`/api/admin/users/${userId}/${endpoint}`, {
+    await fetch(`/api/admin/users/${userId}/${isBanned ? "unban" : "ban"}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -90,18 +86,17 @@ export function AdminPage() {
   const togglePass = (userId: number) => {
     setShowPassFor((prev) => {
       const next = new Set(prev);
-      if (next.has(userId)) next.delete(userId);
-      else next.add(userId);
+      next.has(userId) ? next.delete(userId) : next.add(userId);
       return next;
     });
   };
 
   if (!user?.isAdmin) return null;
 
-  const totalLogins = stats.reduce((s, d) => s + d.loginCount, 0);
+  const onlineCount  = users.filter((u) => u.isOnline).length;
+  const bannedCount  = users.filter((u) => u.isBanned).length;
+  const totalLogins  = stats.reduce((s, d) => s + d.loginCount, 0);
   const totalMessages = stats.reduce((s, d) => s + d.messageCount, 0);
-  const onlineCount = users.filter((u) => u.isOnline).length;
-  const bannedCount = users.filter((u) => u.isBanned).length;
 
   const chartData = stats.map((s) => ({
     date: s.date.slice(5),
@@ -109,8 +104,18 @@ export function AdminPage() {
     Messages: s.messageCount,
   }));
 
+  const filtered = searchQ
+    ? users.filter(
+        (u) =>
+          u.username.toLowerCase().includes(searchQ.toLowerCase()) ||
+          u.email.toLowerCase().includes(searchQ.toLowerCase()) ||
+          (u.displayName || "").toLowerCase().includes(searchQ.toLowerCase())
+      )
+    : users;
+
   return (
     <div className="flex flex-col min-h-full bg-background pb-8">
+      {/* Header */}
       <header className="px-4 py-3 flex items-center gap-2 sticky top-0 bg-background/95 backdrop-blur-sm z-10 border-b border-border">
         <Button
           variant="ghost"
@@ -121,9 +126,10 @@ export function AdminPage() {
           <ArrowLeft size={18} />
         </Button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-base font-bold leading-tight">Admin Dashboard</h1>
-          <p className="text-[11px] text-muted-foreground">Chatter Control Panel</p>
+          <h1 className="text-base font-bold leading-tight">Admin Panel</h1>
+          <p className="text-[11px] text-muted-foreground">Chatter Control Center</p>
         </div>
+        <span className="text-[10px] bg-destructive/20 text-destructive px-2 py-1 rounded-full font-bold">ADMIN</span>
         <Button
           variant="ghost"
           size="icon"
@@ -138,10 +144,10 @@ export function AdminPage() {
       {/* Stats Cards */}
       <div className="px-3 py-3 grid grid-cols-4 gap-2">
         {[
-          { label: "Users", value: users.length, color: "text-primary" },
-          { label: "Online", value: onlineCount, color: "text-green-400" },
-          { label: "Banned", value: bannedCount, color: "text-destructive" },
-          { label: "Msgs 7d", value: totalMessages, color: "text-blue-400" },
+          { label: "Users",   value: users.length,   color: "text-primary" },
+          { label: "Online",  value: onlineCount,    color: "text-green-400" },
+          { label: "Banned",  value: bannedCount,    color: "text-destructive" },
+          { label: "Msgs 7d", value: totalMessages,  color: "text-blue-400" },
         ].map((stat) => (
           <div key={stat.label} className="bg-card rounded-xl p-2.5 border border-border text-center">
             <p className={`text-xl font-bold ${stat.color}`}>{stat.value}</p>
@@ -150,7 +156,7 @@ export function AdminPage() {
         ))}
       </div>
 
-      {/* Tab switcher */}
+      {/* Tabs */}
       <div className="px-3 flex gap-2 mb-3">
         {(["users", "stats"] as const).map((t) => (
           <button
@@ -162,7 +168,11 @@ export function AdminPage() {
                 : "bg-card text-muted-foreground border border-border"
             }`}
           >
-            {t === "users" ? <Users size={14} /> : <BarChart3 size={14} />}
+            {t === "users" ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            ) : (
+              <BarChart3 size={14} />
+            )}
             {t === "users" ? "Users" : "Stats"}
           </button>
         ))}
@@ -173,119 +183,131 @@ export function AdminPage() {
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
       ) : tab === "users" ? (
-        <div className="px-3 space-y-3">
-          <p className="text-xs text-muted-foreground px-1">
-            {users.length} registered users · Long-press password to reveal
-          </p>
-          {users.map((u) => (
-            <div
-              key={u.id}
-              className={`bg-card rounded-2xl border overflow-hidden ${
-                u.isBanned ? "border-destructive/50" : "border-border"
-              }`}
-            >
-              {/* User header */}
-              <div className="flex items-center gap-3 p-3 border-b border-border/50">
-                <div className="relative flex-shrink-0">
-                  <Avatar className="h-10 w-10">
-                    <AvatarImage src={u.avatarUrl || undefined} />
-                    <AvatarFallback className="bg-primary/20 text-primary text-sm">
-                      {(u.displayName?.[0] || u.username[0]).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div
-                    className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card ${
-                      u.isOnline ? "bg-green-400" : "bg-zinc-500"
-                    }`}
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="font-semibold text-sm">{u.displayName || u.username}</span>
-                    {u.email === ADMIN_EMAIL && (
-                      <span className="text-[9px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full font-medium">
-                        ADMIN
-                      </span>
-                    )}
-                    {u.isBanned && (
-                      <span className="text-[9px] bg-destructive/20 text-destructive px-1.5 py-0.5 rounded-full font-medium">
-                        BANNED
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-muted-foreground">@{u.username}</p>
-                </div>
-                {u.email !== ADMIN_EMAIL && (
-                  <Button
-                    size="sm"
-                    variant={u.isBanned ? "outline" : "destructive"}
-                    className={`text-xs h-7 px-3 rounded-lg flex-shrink-0 ${
-                      u.isBanned ? "border-green-500 text-green-400 hover:bg-green-500/10" : ""
-                    }`}
-                    onClick={() => handleBan(u.id, u.isBanned)}
-                    disabled={actionLoading === u.id}
+        <div className="px-3 space-y-2">
+          {/* Search */}
+          <input
+            className="w-full bg-card border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+            placeholder="Search users by name, username or email…"
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+          />
+
+          <p className="text-xs text-muted-foreground px-1">ALL USERS ({filtered.length})</p>
+
+          {/* Horizontal scrollable table */}
+          <div className="overflow-x-auto rounded-2xl border border-border bg-card">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead>
+                <tr className="border-b border-border/60">
+                  <th className="text-left text-xs text-muted-foreground font-semibold px-3 py-2.5 w-40">USER</th>
+                  <th className="text-left text-xs text-muted-foreground font-semibold px-3 py-2.5">EMAIL</th>
+                  <th className="text-left text-xs text-muted-foreground font-semibold px-3 py-2.5 w-32">PASSWORD</th>
+                  <th className="text-left text-xs text-muted-foreground font-semibold px-3 py-2.5 w-24">STATUS</th>
+                  <th className="text-left text-xs text-muted-foreground font-semibold px-3 py-2.5 w-20">ACTION</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((u, idx) => (
+                  <tr
+                    key={u.id}
+                    className={`border-b border-border/30 last:border-0 ${u.isBanned ? "bg-destructive/5" : idx % 2 === 0 ? "" : "bg-secondary/20"}`}
                   >
-                    {actionLoading === u.id ? (
-                      <div className="h-3 w-3 rounded-full border-b border-current animate-spin" />
-                    ) : u.isBanned ? (
-                      <><ShieldOff size={11} className="mr-1" />Unban</>
-                    ) : (
-                      <><Shield size={11} className="mr-1" />Ban</>
-                    )}
-                  </Button>
-                )}
-              </div>
+                    {/* USER */}
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="relative flex-shrink-0">
+                          <Avatar className="h-8 w-8">
+                            <AvatarImage src={u.avatarUrl || undefined} />
+                            <AvatarFallback className="bg-primary/20 text-primary text-xs">
+                              {(u.displayName?.[0] || u.username[0]).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div
+                            className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-card ${
+                              u.isOnline ? "bg-green-400" : "bg-zinc-500"
+                            }`}
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="font-medium text-[12px] text-foreground truncate">@{u.username}</span>
+                            {u.email === ADMIN_EMAIL && (
+                              <span className="text-[9px] bg-primary/20 text-primary px-1 py-0.5 rounded-full font-bold">ADMIN</span>
+                            )}
+                            {u.isBanned && (
+                              <span className="text-[9px] bg-destructive/20 text-destructive px-1 py-0.5 rounded-full font-bold">BANNED</span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-muted-foreground truncate block">{u.displayName}</span>
+                        </div>
+                      </div>
+                    </td>
 
-              {/* User details grid */}
-              <div className="p-3 space-y-1.5 text-[12px]">
-                <div className="flex items-start gap-1">
-                  <span className="text-muted-foreground w-14 flex-shrink-0">Email</span>
-                  <span className="text-foreground break-all">{u.email}</span>
-                </div>
+                    {/* EMAIL */}
+                    <td className="px-3 py-2.5">
+                      <span className="text-[12px] text-foreground break-all">{u.email}</span>
+                    </td>
 
-                <div className="flex items-center gap-1">
-                  <span className="text-muted-foreground w-14 flex-shrink-0">Password</span>
-                  <div className="flex items-center gap-2 flex-1">
-                    <span className={`font-mono ${showPassFor.has(u.id) ? "text-foreground" : "text-muted-foreground tracking-widest"}`}>
-                      {showPassFor.has(u.id)
-                        ? (u.passwordPlain || "Not yet recorded")
-                        : "••••••••"}
-                    </span>
-                    <button
-                      onClick={() => togglePass(u.id)}
-                      className="text-[10px] text-primary underline ml-1"
-                    >
-                      {showPassFor.has(u.id) ? "Hide" : "Show"}
-                    </button>
-                  </div>
-                </div>
+                    {/* PASSWORD */}
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`font-mono text-[11px] ${showPassFor.has(u.id) ? "text-foreground" : "text-muted-foreground tracking-widest"}`}>
+                          {showPassFor.has(u.id)
+                            ? (u.passwordPlain || "—")
+                            : "••••••••"}
+                        </span>
+                        <button
+                          onClick={() => togglePass(u.id)}
+                          className="text-muted-foreground hover:text-foreground flex-shrink-0"
+                        >
+                          {showPassFor.has(u.id) ? <EyeOff size={13} /> : <Eye size={13} />}
+                        </button>
+                      </div>
+                    </td>
 
-                <div className="flex items-center gap-1">
-                  <span className="text-muted-foreground w-14 flex-shrink-0">Status</span>
-                  {u.isOnline ? (
-                    <span className="text-green-400 flex items-center gap-1">
-                      <Wifi size={11} /> Online
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      <WifiOff size={11} />
-                      {u.lastSeen
-                        ? `Offline · ${formatDistanceToNow(new Date(u.lastSeen), { addSuffix: true })}`
-                        : "Never online"}
-                    </span>
-                  )}
-                </div>
+                    {/* STATUS */}
+                    <td className="px-3 py-2.5">
+                      {u.isOnline ? (
+                        <span className="flex items-center gap-1 text-green-400 text-[11px] font-medium">
+                          <Wifi size={11} /> Online
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-muted-foreground text-[11px]">
+                          <WifiOff size={11} />
+                          <span>Offline</span>
+                        </span>
+                      )}
+                    </td>
 
-                <div className="flex items-center gap-1">
-                  <span className="text-muted-foreground w-14 flex-shrink-0">Joined</span>
-                  <span className="text-foreground flex items-center gap-1">
-                    <Clock size={10} />
-                    {formatDistanceToNow(new Date(u.createdAt), { addSuffix: true })}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
+                    {/* ACTION */}
+                    <td className="px-3 py-2.5">
+                      {u.email !== ADMIN_EMAIL ? (
+                        <Button
+                          size="sm"
+                          variant={u.isBanned ? "outline" : "destructive"}
+                          className={`text-[11px] h-7 px-2.5 rounded-lg ${
+                            u.isBanned ? "border-green-500 text-green-400 hover:bg-green-500/10" : ""
+                          }`}
+                          onClick={() => handleBan(u.id, u.isBanned)}
+                          disabled={actionLoading === u.id}
+                        >
+                          {actionLoading === u.id ? (
+                            <div className="h-3 w-3 rounded-full border-b border-current animate-spin" />
+                          ) : u.isBanned ? (
+                            <><ShieldOff size={11} className="mr-1" />Unban</>
+                          ) : (
+                            <><Shield size={11} className="mr-1" />Ban</>
+                          )}
+                        </Button>
+                      ) : (
+                        <span className="text-[11px] text-primary font-bold">Admin</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <div className="px-3 space-y-3">
@@ -300,12 +322,7 @@ export function AdminPage() {
                   <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#777" }} />
                   <YAxis tick={{ fontSize: 10, fill: "#777" }} allowDecimals={false} />
                   <Tooltip
-                    contentStyle={{
-                      background: "#0f0f1a",
-                      border: "1px solid #333",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
+                    contentStyle={{ background: "#0f0f1a", border: "1px solid #333", borderRadius: 8, fontSize: 12 }}
                     labelStyle={{ color: "#aaa" }}
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -315,7 +332,6 @@ export function AdminPage() {
               </ResponsiveContainer>
             )}
           </div>
-
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-card rounded-xl border border-border p-4">
               <p className="text-xs text-muted-foreground">Total Logins (7d)</p>
@@ -326,7 +342,7 @@ export function AdminPage() {
               <p className="text-3xl font-bold text-blue-400 mt-1">{totalMessages}</p>
             </div>
             <div className="bg-card rounded-xl border border-border p-4">
-              <p className="text-xs text-muted-foreground">Active Users</p>
+              <p className="text-xs text-muted-foreground">Online Now</p>
               <p className="text-3xl font-bold text-green-400 mt-1">{onlineCount}</p>
             </div>
             <div className="bg-card rounded-xl border border-border p-4">

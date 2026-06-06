@@ -1,0 +1,67 @@
+Total 14 changes, fix, karna haa or sahi karna haa.
+
+
+Joo mena prompt Diya haa har ek word ko accha se analysis kar 
+Or mera prompt thoda mujhe assa se banana nahi aata haa too dhiyan se padna
+Prompt ki padkar accha se banaa or read kar.
+1.Baaki jaise ha wassa hi rahna dena kuch change maat kar 
+
+Ans. Inme chedd chaad maat karna.
+
+
+2.Ek user message delete karta ha too dusra user ke isme se bhi message delete hoo jayee haa assa nahi hona chahiye WhatsApp ki tarah hona chahiye.
+
+3.Sign up me email address nahi likh paa raha ha user 
+
+
+Ans. Issa sahi kar
+
+
+4.Admin panel me data kuch iss tarah se horizontal hii dikhna chahiye
+Jaise image me haa 
+Ui interface
+User, Email, password, online/offline,
+
+5.Next, I can add read receipts (double-tick ✓✓ like WhatsApp) so senders can see when their messages were seen. Would you like me to do that?
+
+
+6.User offline/online/typing haa yaha sahi sahi batana chahiye kiyu ki yaha galat batataa haa 
+
+
+7.After signup wala assa ui interface dikhna chahiye or kaam bhi karna chahiye.
+
+8.Video call ke left side me extra call ka bhi icon hona chahiye per kaam bhi karna chahiye call lagna  bhi chaiye.proper real call lagna bhi chaiye. Fakevnahi hona chahiye 
+
+9.Profile ui interface assa dikhna chahiye
+Invite friend
+Admin panel
+Red button.
+
+
+10.Low ram Wale mobile me accha se chalee 
+Or 
+Low internet me bhi accha se kaam kare 
+Lightweight fast smoothly makhan ki tarah chalna chahiye.
+
+
+11.Yaha per 3 dot ka option hona chahiye
+Jis per click karke
+3 option ayinga 
+Select
+
+Select ek sath 2,se 5 user ki I'd select karna per 
+Delete or 
+Group ka option anna chahiye.whatsapp ki tarah 
+
+
+12.(+) Plus icon ko change karke search ka icon bana dee 
+Or isme sirf wahi user ko search kar sakta ha Joo iss time user ki list me Joo user sikh rahee haa WhatsApp ki tarah Joo user list me nahi haa woo user nahi dikhega search karna per bhi.
+
+13. Mera hisaab se user ko iska ui/ux interface kiyu pasand kiyu nahi ayega ussa dekh kar iska assa bana ki user ko pasand ayee or accha se chaale 
+
+14"Sab changes karna ke baad ek bar test karke meko guaranty dena ki sabhi changes accha se kaam kar rahee haa."
+
+Kiyu ku agar me testing karunga too mujhe bug, ,glitch,issues,error ,problem
+,Hang,lag  mistakes face naa karna paade.
+
+Repilt Teri exam ha me rmtera test lee raha hu ki tu kitna accha se bana sakta haa.

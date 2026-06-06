@@ -11,6 +11,7 @@ export const messagesTable = pgTable("messages", {
   content: text("content").notNull(),
   messageType: varchar("message_type", { length: 32 }).notNull().default("text"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  seenAt: timestamp("seen_at"),
 });
 
 export const insertMessageSchema = createInsertSchema(messagesTable).omit({

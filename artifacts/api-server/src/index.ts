@@ -18,8 +18,15 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 const server = http.createServer(app);
-setupWebSocketServer(server);
 
-server.listen(port, () => {
-  logger.info({ port }, "Server listening (HTTP + WebSocket)");
+async function main() {
+  await setupWebSocketServer(server);
+  server.listen(port, () => {
+    logger.info({ port }, "Server listening (HTTP + WebSocket)");
+  });
+}
+
+main().catch((err) => {
+  logger.error(err, "Failed to start server");
+  process.exit(1);
 });
