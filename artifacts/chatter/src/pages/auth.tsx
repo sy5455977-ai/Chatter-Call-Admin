@@ -1,36 +1,16 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { MessageCircle, Eye, EyeOff, CheckCircle2, Sparkles } from "lucide-react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { useLogin, useRegister } from "@workspace/api-client-react/generated/api";
 import { setAuthToken, setAuthUser, getAuthToken } from "../lib/auth";
 import { initWebSocket } from "../lib/websocket";
 import type { AuthUser } from "../lib/auth";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-
-const loginSchema = z.object({
-  username: z.string().min(1, "Username or email is required"),
-  password: z.string().min(1, "Password is required"),
-});
-
-const registerSchema = z.object({
-  email:    z.string().min(1, "Email is required").email("Enter a valid email address"),
-  username: z.string().min(3, "Username must be at least 3 characters"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-});
-
-type LoginValues    = z.infer<typeof loginSchema>;
-type RegisterValues = z.infer<typeof registerSchema>;
 
 function stripHttpPrefix(message: string) {
   return message.replace(/^HTTP \d{3}[^:]*:\s*/, "");
 }
 
-// Welcome screen shown briefly after signup
 function WelcomeScreen({ name, onDone }: { name: string; onDone: () => void }) {
   useEffect(() => {
     const t = setTimeout(onDone, 2200);
@@ -39,7 +19,7 @@ function WelcomeScreen({ name, onDone }: { name: string; onDone: () => void }) {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-background">
-      <div className="flex flex-col items-center gap-5 animate-in fade-in-0 zoom-in-95 duration-500">
+      <div className="flex flex-col items-center gap-5">
         <div className="relative">
           <div className="w-24 h-24 rounded-3xl bg-primary/15 flex items-center justify-center shadow-xl">
             <MessageCircle size={44} className="text-primary" />
@@ -75,11 +55,23 @@ function WelcomeScreen({ name, onDone }: { name: string; onDone: () => void }) {
 
 export function AuthPage() {
   const [, setLocation] = useLocation();
-  const [isLogin, setIsLogin]             = useState(true);
-  const [showPassword, setShowPassword]   = useState(false);
-  const [apiError, setApiError]           = useState("");
-  const [welcomeName, setWelcomeName]     = useState<string | null>(null);
-  const [pendingData, setPendingData]     = useState<{ token: string; user: unknown } | null>(null);
+  const [isLogin, setIsLogin]           = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [apiError, setApiError]         = useState("");
+  const [welcomeName, setWelcomeName]   = useState<string | null>(null);
+  const [pendingData, setPendingData]   = useState<{ token: string; user: unknown } | null>(null);
+
+  // Login form state
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+
+  // Register form state
+  const [regEmail, setRegEmail]       = useState("");
+  const [regUsername, setRegUsername] = useState("");
+  const [regPassword, setRegPassword] = useState("");
+
+  // Validation errors
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (getAuthToken()) setLocation("/chats");
@@ -101,60 +93,63 @@ export function AuthPage() {
   const loginMutation = useLogin({
     mutation: {
       onSuccess: (data) => onAuthSuccess(data as { token: string; user: unknown }),
-      onError:   (err)  => setApiError(stripHttpPrefix((err as Error).message ?? "Login failed")),
+      onError: (err) => setApiError(stripHttpPrefix((err as Error).message ?? "Login failed")),
     },
   });
 
   const registerMutation = useRegister({
     mutation: {
       onSuccess: (data) => onRegisterSuccess(data as { token: string; user: unknown }),
-      onError:   (err)  => setApiError(stripHttpPrefix((err as Error).message ?? "Registration failed")),
+      onError: (err) => setApiError(stripHttpPrefix((err as Error).message ?? "Registration failed")),
     },
-  });
-
-  const loginForm = useForm<LoginValues>({
-    resolver:      zodResolver(loginSchema),
-    defaultValues: { username: "", password: "" },
-  });
-
-  const registerForm = useForm<RegisterValues>({
-    resolver:      zodResolver(registerSchema),
-    defaultValues: { email: "", username: "", password: "" },
   });
 
   const switchTab = (toLogin: boolean) => {
     setIsLogin(toLogin);
     setShowPassword(false);
     setApiError("");
-    loginForm.clearErrors();
-    registerForm.clearErrors();
+    setErrors({});
     loginMutation.reset();
     registerMutation.reset();
   };
 
-  const onLoginSubmit = (v: LoginValues) => {
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const errs: Record<string, string> = {};
+    if (!loginUsername.trim()) errs.username = "Username or email is required";
+    if (!loginPassword)        errs.password = "Password is required";
+    if (Object.keys(errs).length) { setErrors(errs); return; }
     setApiError("");
-    loginMutation.mutate({ data: { username: v.username, password: v.password } });
+    setErrors({});
+    loginMutation.mutate({ data: { username: loginUsername.trim(), password: loginPassword } });
   };
 
-  const onRegisterSubmit = (v: RegisterValues) => {
+  const handleRegisterSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const errs: Record<string, string> = {};
+    if (!regEmail.trim())           errs.email    = "Email is required";
+    else if (!/\S+@\S+\.\S+/.test(regEmail.trim())) errs.email = "Enter a valid email address";
+    if (regUsername.trim().length < 3) errs.username = "Username must be at least 3 characters";
+    if (regPassword.length < 6)    errs.password = "Password must be at least 6 characters";
+    if (Object.keys(errs).length) { setErrors(errs); return; }
     setApiError("");
-    registerMutation.mutate({ data: { email: v.email, username: v.username, password: v.password } });
+    setErrors({});
+    registerMutation.mutate({ data: { email: regEmail.trim(), username: regUsername.trim(), password: regPassword } });
   };
 
   const isLoading = loginMutation.isPending || registerMutation.isPending;
 
-  // Show welcome screen after signup
   if (welcomeName) {
     return (
       <WelcomeScreen
         name={welcomeName}
-        onDone={() => {
-          if (pendingData) onAuthSuccess(pendingData);
-        }}
+        onDone={() => { if (pendingData) onAuthSuccess(pendingData); }}
       />
     );
   }
+
+  const inputClass = "w-full h-12 px-4 rounded-xl bg-secondary/60 text-foreground placeholder:text-muted-foreground text-[15px] outline-none focus:ring-2 focus:ring-primary/40 border-0";
+  const errorClass = "text-destructive text-xs mt-1";
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-background">
@@ -165,10 +160,9 @@ export function AuthPage() {
         </div>
 
         <h1 className="text-3xl font-bold mb-1">Chatter</h1>
-        <p className="text-muted-foreground mb-7 text-center text-sm">
-          Real-time messaging app
-        </p>
+        <p className="text-muted-foreground mb-7 text-center text-sm">Real-time messaging app</p>
 
+        {/* Tab switcher */}
         <div className="flex w-full bg-secondary rounded-full p-1 mb-6">
           {(["Sign In", "Sign Up"] as const).map((label) => {
             const active = (label === "Sign In") === isLogin;
@@ -187,144 +181,127 @@ export function AuthPage() {
           })}
         </div>
 
+        {/* ── SIGN IN ── */}
         {isLogin ? (
-          <Form {...loginForm}>
-            <form onSubmit={loginForm.handleSubmit(onLoginSubmit)} className="w-full space-y-4">
-              <FormField control={loginForm.control} name="username" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Username or Email</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="your username or email"
-                      autoComplete="username"
-                      autoCorrect="off"
-                      autoCapitalize="none"
-                      spellCheck={false}
-                      {...field}
-                      className="bg-secondary/50 border-0 h-12"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+          <form onSubmit={handleLoginSubmit} className="w-full space-y-4" noValidate>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Username or Email</label>
+              <input
+                className={inputClass}
+                placeholder="your username or email"
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+                autoComplete="username"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+              {errors.username && <p className={errorClass}>{errors.username}</p>}
+            </div>
 
-              <FormField control={loginForm.control} name="password" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Password</FormLabel>
-                  <FormControl>
-                    <div className="relative">
-                      <Input
-                        type={showPassword ? "text" : "password"}
-                        placeholder="••••••••"
-                        autoComplete="current-password"
-                        {...field}
-                        className="bg-secondary/50 border-0 h-12 pr-11"
-                      />
-                      <button
-                        type="button"
-                        tabIndex={-1}
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                      </button>
-                    </div>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Password</label>
+              <div className="relative">
+                <input
+                  className={`${inputClass} pr-12`}
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+              {errors.password && <p className={errorClass}>{errors.password}</p>}
+            </div>
 
-              {apiError && (
-                <div className="bg-destructive/10 border border-destructive/30 rounded-xl px-4 py-3">
-                  <p className="text-destructive text-sm text-center">{apiError}</p>
-                </div>
-              )}
+            {apiError && (
+              <div className="bg-destructive/10 border border-destructive/30 rounded-xl px-4 py-3">
+                <p className="text-destructive text-sm text-center">{apiError}</p>
+              </div>
+            )}
 
-              <Button type="submit" className="w-full mt-2 py-6 text-base font-semibold rounded-xl" disabled={isLoading}>
-                {isLoading ? <Spinner /> : "Sign In"}
-              </Button>
-            </form>
-          </Form>
+            <Button type="submit" className="w-full mt-2 h-13 py-6 text-base font-semibold rounded-xl" disabled={isLoading}>
+              {isLoading ? <Spinner /> : "Sign In"}
+            </Button>
+          </form>
 
         ) : (
-          <Form {...registerForm}>
-            <form onSubmit={registerForm.handleSubmit(onRegisterSubmit)} className="w-full space-y-4">
+          /* ── SIGN UP ── */
+          <form onSubmit={handleRegisterSubmit} className="w-full space-y-4" noValidate>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Email Address</label>
+              <input
+                className={inputClass}
+                type="text"
+                inputMode="email"
+                placeholder="you@example.com"
+                value={regEmail}
+                onChange={(e) => setRegEmail(e.target.value)}
+                autoComplete="email"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+              {errors.email && <p className={errorClass}>{errors.email}</p>}
+            </div>
 
-              <FormField control={registerForm.control} name="email" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Email Address</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="text"
-                      inputMode="email"
-                      placeholder="you@example.com"
-                      autoComplete="email"
-                      autoCorrect="off"
-                      autoCapitalize="none"
-                      spellCheck={false}
-                      {...field}
-                      className="bg-secondary/50 border-0 h-12"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Username</label>
+              <input
+                className={inputClass}
+                type="text"
+                placeholder="choose a username"
+                value={regUsername}
+                onChange={(e) => setRegUsername(e.target.value)}
+                autoComplete="username"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+              {errors.username && <p className={errorClass}>{errors.username}</p>}
+            </div>
 
-              <FormField control={registerForm.control} name="username" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Username</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="choose a username"
-                      autoComplete="username"
-                      autoCorrect="off"
-                      autoCapitalize="none"
-                      spellCheck={false}
-                      {...field}
-                      className="bg-secondary/50 border-0 h-12"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Password</label>
+              <div className="relative">
+                <input
+                  className={`${inputClass} pr-12`}
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••  (min 6 chars)"
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+              {errors.password && <p className={errorClass}>{errors.password}</p>}
+            </div>
 
-              <FormField control={registerForm.control} name="password" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Password</FormLabel>
-                  <FormControl>
-                    <div className="relative">
-                      <Input
-                        type={showPassword ? "text" : "password"}
-                        placeholder="••••••••  (min 6 chars)"
-                        autoComplete="new-password"
-                        {...field}
-                        className="bg-secondary/50 border-0 h-12 pr-11"
-                      />
-                      <button
-                        type="button"
-                        tabIndex={-1}
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                      </button>
-                    </div>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+            {apiError && (
+              <div className="bg-destructive/10 border border-destructive/30 rounded-xl px-4 py-3">
+                <p className="text-destructive text-sm text-center">{apiError}</p>
+              </div>
+            )}
 
-              {apiError && (
-                <div className="bg-destructive/10 border border-destructive/30 rounded-xl px-4 py-3">
-                  <p className="text-destructive text-sm text-center">{apiError}</p>
-                </div>
-              )}
-
-              <Button type="submit" className="w-full mt-2 py-6 text-base font-semibold rounded-xl" disabled={isLoading}>
-                {isLoading ? <Spinner /> : "Create Account"}
-              </Button>
-            </form>
-          </Form>
+            <Button type="submit" className="w-full mt-2 h-13 py-6 text-base font-semibold rounded-xl" disabled={isLoading}>
+              {isLoading ? <Spinner /> : "Create Account"}
+            </Button>
+          </form>
         )}
       </div>
     </div>
