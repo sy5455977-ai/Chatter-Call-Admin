@@ -36,7 +36,7 @@ export function AdminStudioPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      content: `Namaste! Main hun aapka **${settings.appName} AI Secretary** 🤖\n\nMujhe pata hai app ke baare mein sab kuch - users, stats, settings. Aap mujhse keh sakte ho:\n- 🎨 "Primary color change kar ke green kar do"\n- 📝 "App ka naam badal do MyChat"\n- 🌑 "Background aur dark kar do"\n- 💾 "Current settings ka snapshot le lo"\n\nKya badalna hai?`,
+      content: `Namaste! Main hun aapka **Gemini AI Secretary** 🤖✨\n\nMujhe puri app ki knowledge hai — users, stats, settings, sab kuch. Bas bol do aur main kar dunga:\n\n🎨 **"Primary color blue kar do"** → instantly ho jaayega\n📝 **"App ka naam badal do"** → abhi badal deta hun\n🌑 **"Theme purple karo"** → done!\n📊 **"Kitne users hain?"** → sab data mere paas hai\n💾 **"Snapshot lo"** → current state save ho jaayegi\n\nKya karna hai? Seedha bol do! 🚀`,
     },
   ]);
   const [input, setInput] = useState("");

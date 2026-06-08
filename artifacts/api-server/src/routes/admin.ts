@@ -181,15 +181,15 @@ router.post("/admin/settings/rollback/:id", authMiddleware, adminMiddleware, asy
   }
 });
 
-// ── AI Secretary Chat ─────────────────────────────────────────────────────────
+// ── AI Secretary Chat (Gemini) ────────────────────────────────────────────────
 
 router.post("/admin/ai-chat", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       res.status(503).json({
         error: "no_key",
-        message: "OpenAI API key not configured. Please add OPENAI_API_KEY in Replit Secrets.",
+        message: "Gemini API key not configured. Please add GEMINI_API_KEY in Replit Secrets.",
       });
       return;
     }
@@ -216,7 +216,7 @@ router.post("/admin/ai-chat", authMiddleware, adminMiddleware, async (req, res) 
     const bannedUsers = userRows.filter((u) => u.isBanned).length;
     const totalMsgs = statsRows.reduce((s, d) => s + d.messageCount, 0);
 
-    const systemPrompt = `You are the Admin AI Secretary for "${currentSettings.appName}", a real-time chat application. You are a powerful assistant who can customize and control the entire app.
+    const systemPrompt = `You are the Admin AI Secretary for "${currentSettings.appName}", a real-time chat application. You are an extremely intelligent and helpful assistant who can fully customize and control this app — just like a Replit AI assistant.
 
 CURRENT APP STATS:
 - Total users: ${totalUsers}
@@ -227,51 +227,60 @@ CURRENT APP STATS:
 CURRENT SETTINGS:
 ${Object.entries(currentSettings).map(([k, v]) => `- ${k}: ${v}`).join("\n")}
 
-WHAT YOU CAN CHANGE (respond with CHANGES block when you want to apply changes):
-- primaryHsl: Primary/accent color in HSL format (e.g., "120 60% 50%" for green, "210 80% 60%" for blue, "0 80% 60%" for red)
-- backgroundHsl: App background color in HSL (e.g., "0 0% 5%" for near-black)
-- cardHsl: Card/panel background in HSL (e.g., "0 0% 8%")
-- appName: App name (string)
-- tagline: Subtitle shown on login page (string)
+WHAT YOU CAN CHANGE (use CHANGES block when making changes):
+- primaryHsl: Main accent/button color in HSL format. Examples: "120 60% 45%" (green), "210 80% 55%" (blue), "0 75% 50%" (red), "280 65% 55%" (purple), "45 68% 47%" (gold/default)
+- backgroundHsl: App background. Examples: "220 30% 6%" (dark blue-black), "0 0% 5%" (pure dark), "240 25% 7%" (dark purple-black)
+- cardHsl: Card/panel color. Should be slightly lighter than background. Examples: "220 30% 9%", "0 0% 8%"
+- appName: The app's display name (any string)
+- tagline: Subtitle on login page (any string)
 
-RESPONSE FORMAT:
-- Reply in a friendly, conversational way (Hindi/English mix is fine).
-- If you want to make changes, end your reply with a special block EXACTLY like this:
-CHANGES:{"key":"value","key2":"value2"}
-- Only include the CHANGES block if you are actually making changes.
-- Keep HSL values as "H S% L%" format (e.g., "45 68% 47%").
-- Make sure HSL values are valid and reasonable for a dark-themed chat app.
+RESPONSE FORMAT RULES:
+1. Reply conversationally in Hindi/English mix (Hinglish) — be warm and friendly.
+2. When the user asks you to make ANY visual or setting change, DO IT immediately and confidently.
+3. If making changes, end your message with this EXACT block (no space between CHANGES: and the JSON):
+CHANGES:{"key":"value"}
+4. Only add CHANGES block when actually changing something.
+5. HSL format: "H S% L%" — always include % signs on S and L values.
+6. Be smart: if user says "green karo" pick a nice green like "142 70% 45%", if "blue karo" use "210 80% 55%", etc.
+7. Keep the dark theme feel — don't make backgrounds too light.
+8. You can change multiple settings at once in one CHANGES block.
 
-Be helpful, friendly, and knowledgeable about the app. You know everything about its users, settings, and stats.`;
+You are powerful, knowledgeable, and proactive. Answer questions about the app, suggest improvements, and execute changes confidently.`;
 
-    const messages = [
-      { role: "system" as const, content: systemPrompt },
-      ...history.slice(-10),
-      { role: "user" as const, content: message },
-    ];
+    // Convert history to Gemini format (user/model roles)
+    const geminiContents = history.slice(-12).map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
+    geminiContents.push({ role: "user", parts: [{ text: message }] });
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+    const geminiBody = {
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      contents: geminiContents,
+      generationConfig: {
+        maxOutputTokens: 1024,
+        temperature: 0.7,
       },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages,
-        max_tokens: 1024,
-      }),
-    });
+    };
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(geminiBody),
+      }
+    );
 
     if (!response.ok) {
       const errText = await response.text();
-      req.log.error({ status: response.status, body: errText }, "OpenAI API error");
-      res.status(502).json({ error: "AI service error. Check your OpenAI API key and billing." });
+      req.log.error({ status: response.status, body: errText }, "Gemini API error");
+      res.status(502).json({ error: "AI service error. Check your Gemini API key." });
       return;
     }
 
     const data = await response.json() as any;
-    const rawText: string = data.choices?.[0]?.message?.content ?? "";
+    const rawText: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
     let text = rawText;
     let changes: Record<string, string> | null = null;
