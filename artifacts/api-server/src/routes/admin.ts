@@ -194,13 +194,14 @@ router.post("/admin/ai-chat", authMiddleware, adminMiddleware, async (req, res) 
       return;
     }
 
-    const { message, history = [] } = req.body as {
+    const { message, history = [], image } = req.body as {
       message: string;
       history: Array<{ role: "user" | "assistant"; content: string }>;
+      image?: { base64: string; mimeType: string };
     };
 
-    if (!message?.trim()) {
-      res.status(400).json({ error: "message required" });
+    if (!message?.trim() && !image) {
+      res.status(400).json({ error: "message or image required" });
       return;
     }
 
@@ -248,11 +249,18 @@ CHANGES:{"key":"value"}
 You are powerful, knowledgeable, and proactive. Answer questions about the app, suggest improvements, and execute changes confidently.`;
 
     // Convert history to Gemini format (user/model roles)
-    const geminiContents = history.slice(-12).map((m) => ({
+    const geminiContents: any[] = history.slice(-12).map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     }));
-    geminiContents.push({ role: "user", parts: [{ text: message }] });
+
+    // Build final user message parts (image first, then text)
+    const lastParts: any[] = [];
+    if (image?.base64 && image?.mimeType) {
+      lastParts.push({ inlineData: { mimeType: image.mimeType, data: image.base64 } });
+    }
+    lastParts.push({ text: message?.trim() || "Yeh image dekho aur batao kya update ya improve karna chahiye." });
+    geminiContents.push({ role: "user", parts: lastParts });
 
     const geminiBody = {
       system_instruction: { parts: [{ text: systemPrompt }] },
@@ -275,7 +283,18 @@ You are powerful, knowledgeable, and proactive. Answer questions about the app, 
     if (!response.ok) {
       const errText = await response.text();
       req.log.error({ status: response.status, body: errText }, "Gemini API error");
-      res.status(502).json({ error: "AI service error. Check your Gemini API key." });
+      if (response.status === 429) {
+        res.status(429).json({
+          error: "quota_exceeded",
+          message: "Free tier quota limit hit. Please wait a few minutes and try again, or enable billing on Google AI Studio.",
+        });
+        return;
+      }
+      if (response.status === 400) {
+        res.status(400).json({ error: "Invalid request. Image size too large ya unsupported format." });
+        return;
+      }
+      res.status(502).json({ error: "AI service temporarily unavailable. Please try again." });
       return;
     }
 

@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
-import { ArrowLeft, Send, Loader2, Camera, CheckCircle2, RotateCcw, Bot, User, ChevronDown, RefreshCw } from "lucide-react";
+import {
+  ArrowLeft, Send, Loader2, Camera, CheckCircle2, RotateCcw,
+  Bot, User, ChevronDown, RefreshCw, History, ImagePlus, X,
+  MessageSquare, Plus, Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAuthToken } from "../lib/auth";
 import { useAppSettings } from "../lib/app-settings";
@@ -9,8 +13,22 @@ import { useToast } from "@/hooks/use-toast";
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  imagePreview?: string;
   changes?: Record<string, string> | null;
   applied?: boolean;
+}
+
+interface StoredSession {
+  id: string;
+  createdAt: string;
+  firstMessage: string;
+  messages: Array<{
+    role: "user" | "assistant";
+    content: string;
+    changes?: Record<string, string> | null;
+    applied?: boolean;
+  }>;
+  changesApplied: string[];
 }
 
 interface Snapshot {
@@ -20,12 +38,46 @@ interface Snapshot {
 }
 
 const SETTING_LABELS: Record<string, string> = {
-  primaryHsl: "Primary Color (HSL)",
-  backgroundHsl: "Background Color (HSL)",
-  cardHsl: "Card Color (HSL)",
+  primaryHsl: "Primary Color",
+  backgroundHsl: "Background Color",
+  cardHsl: "Card Color",
   appName: "App Name",
   tagline: "Tagline",
 };
+
+const MAX_SESSIONS = 30;
+const STORAGE_KEY = "adminStudioHistory_v2";
+
+const WELCOME_MSG: ChatMessage = {
+  role: "assistant",
+  content: `Namaste! Main hun aapka **Gemini AI Secretary** 🤖✨\n\nMujhe puri app ki knowledge hai — users, stats, settings, sab kuch. Bas bol do:\n\n🎨 **"Primary color blue kar do"** → instantly ho jaayega\n📝 **"App ka naam badal do"** → abhi badal deta hun\n🌑 **"Theme purple karo"** → done!\n📊 **"Kitne users hain?"** → sab data mere paas hai\n📸 **Image attach karo** → screenshot dekh ke suggest karunga\n💾 **"Snapshot lo"** → current state save ho jaayegi\n\nKya karna hai? Seedha bol do! 🚀`,
+};
+
+function loadSessions(): StoredSession[] {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function persistSessions(sessions: StoredSession[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, MAX_SESSIONS)));
+  } catch {}
+}
+
+function formatDate(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return "Abhi";
+  if (diffMins < 60) return `${diffMins}m pehle`;
+  const diffHrs = Math.floor(diffMins / 60);
+  if (diffHrs < 24) return `${diffHrs}h pehle`;
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+}
 
 export function AdminStudioPage() {
   const [, setLocation] = useLocation();
@@ -33,25 +85,32 @@ export function AdminStudioPage() {
   const { toast } = useToast();
   const token = getAuthToken();
 
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "assistant",
-      content: `Namaste! Main hun aapka **Gemini AI Secretary** 🤖✨\n\nMujhe puri app ki knowledge hai — users, stats, settings, sab kuch. Bas bol do aur main kar dunga:\n\n🎨 **"Primary color blue kar do"** → instantly ho jaayega\n📝 **"App ka naam badal do"** → abhi badal deta hun\n🌑 **"Theme purple karo"** → done!\n📊 **"Kitne users hain?"** → sab data mere paas hai\n💾 **"Snapshot lo"** → current state save ho jaayegi\n\nKya karna hai? Seedha bol do! 🚀`,
-    },
-  ]);
+  const [activeTab, setActiveTab] = useState<"history" | "chat" | "preview">("chat");
+  const [showHistorySidebar, setShowHistorySidebar] = useState(false);
+  const [showSnapshots, setShowSnapshots] = useState(false);
+
+  const [sessions, setSessions] = useState<StoredSession[]>(loadSessions);
+  const sessionIdRef = useRef<string>(Date.now().toString());
+
+  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MSG]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [activeTab, setActiveTab] = useState<"chat" | "preview">("chat");
-  const [showSnapshots, setShowSnapshots] = useState(false);
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [savingSnap, setSavingSnap] = useState(false);
-  const [previewKey, setPreviewKey] = useState(0);
   const [pendingChanges, setPendingChanges] = useState<{ msgIdx: number; changes: Record<string, string> } | null>(null);
   const [applyingChanges, setApplyingChanges] = useState(false);
 
+  const [imageAttachment, setImageAttachment] = useState<{
+    base64: string;
+    mimeType: string;
+    previewUrl: string;
+  } | null>(null);
+
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [savingSnap, setSavingSnap] = useState(false);
+  const [previewKey, setPreviewKey] = useState(0);
+
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -70,16 +129,112 @@ export function AdminStudioPage() {
     fetchSnapshots();
   }, [fetchSnapshots]);
 
+  // Auto-save current session to localStorage after every exchange
+  useEffect(() => {
+    const userMsgs = messages.filter((m) => m.role === "user");
+    if (userMsgs.length === 0) return;
+
+    const changesApplied = messages
+      .filter((m) => m.changes && m.applied)
+      .flatMap((m) => Object.keys(m.changes!));
+
+    const sessionData: StoredSession = {
+      id: sessionIdRef.current,
+      createdAt: new Date().toISOString(),
+      firstMessage: userMsgs[0].content.slice(0, 70),
+      messages: messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+        changes: m.changes,
+        applied: m.applied,
+      })),
+      changesApplied,
+    };
+
+    setSessions((prev) => {
+      const filtered = prev.filter((s) => s.id !== sessionIdRef.current);
+      const updated = [sessionData, ...filtered].slice(0, MAX_SESSIONS);
+      persistSessions(updated);
+      return updated;
+    });
+  }, [messages]);
+
+  const loadSession = (session: StoredSession) => {
+    sessionIdRef.current = session.id;
+    setMessages(
+      session.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+        changes: m.changes || null,
+        applied: m.applied,
+      }))
+    );
+    setPendingChanges(null);
+    setImageAttachment(null);
+    setInput("");
+    setShowHistorySidebar(false);
+    setActiveTab("chat");
+    toast({ title: "📂 Session loaded", description: session.firstMessage });
+  };
+
+  const startNewChat = () => {
+    sessionIdRef.current = Date.now().toString();
+    setMessages([WELCOME_MSG]);
+    setPendingChanges(null);
+    setInput("");
+    setImageAttachment(null);
+    setShowHistorySidebar(false);
+    setActiveTab("chat");
+  };
+
+  const deleteSession = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setSessions((prev) => {
+      const updated = prev.filter((s) => s.id !== id);
+      persistSessions(updated);
+      return updated;
+    });
+  };
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      toast({ title: "Image too large", description: "Maximum 4MB allowed", variant: "destructive" });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      setImageAttachment({
+        base64: dataUrl.split(",")[1],
+        mimeType: file.type,
+        previewUrl: dataUrl,
+      });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
   const sendMessage = async () => {
     const text = input.trim();
-    if (!text || sending) return;
+    if ((!text && !imageAttachment) || sending) return;
     setInput("");
+    const attachmentToSend = imageAttachment;
+    setImageAttachment(null);
 
     const history = messages
       .filter((m) => !m.changes || m.applied)
       .map((m) => ({ role: m.role, content: m.content }));
 
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "user",
+        content: text || "Yeh image dekho",
+        imagePreview: attachmentToSend?.previewUrl,
+      },
+    ]);
     setSending(true);
 
     try {
@@ -89,26 +244,30 @@ export function AdminStudioPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({
+          message: text || "Yeh image dekho aur batao kya update ya improve karna chahiye",
+          history,
+          image: attachmentToSend
+            ? { base64: attachmentToSend.base64, mimeType: attachmentToSend.mimeType }
+            : undefined,
+        }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
+        let errorContent = `❌ Error: ${data.error || "Kuch galat ho gaya. Dobara try karo."}`;
         if (data.error === "no_key") {
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              content: `⚠️ **OpenAI API Key nahi mila!**\n\nAI Secretary ke liye ek baar apni OpenAI API key add karni hogi:\n1. [platform.openai.com](https://platform.openai.com) pe jaao\n2. API Keys section mein new key banao\n3. Replit ke **Secrets** tab mein jaao (left sidebar)\n4. **OPENAI_API_KEY** naam se key daalo\n\nKey add karne ke baad yahan wapas aao! 🔑`,
-            },
-          ]);
-        } else {
-          setMessages((prev) => [
-            ...prev,
-            { role: "assistant", content: `❌ Error: ${data.error || "Kuch galat ho gaya. Dobara try karo."}` },
-          ]);
+          errorContent = `⚠️ **Gemini API Key nahi mili!**\n\nReplit Secrets mein **GEMINI_API_KEY** naam se key add karo.`;
+        } else if (data.error === "quota_exceeded") {
+          errorContent = `⏳ **Quota limit hit ho gayi!**\n\nGemini free tier mein limited requests hain. Kuch minutes baad dobara try karo.\n\nZyada use ke liye: [Google AI Studio](https://aistudio.google.com) mein billing enable karo.`;
+        } else if (res.status >= 500) {
+          errorContent = `🔄 **Server busy hai.** Ek baar dobara try karo.`;
         }
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: errorContent },
+        ]);
         return;
       }
 
@@ -125,7 +284,10 @@ export function AdminStudioPage() {
     } catch {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "❌ Network error. Server se connect nahi ho pa raha. Dobara try karo." },
+        {
+          role: "assistant",
+          content: "❌ Network error. Server se connect nahi ho pa raha. Dobara try karo.",
+        },
       ]);
     } finally {
       setSending(false);
@@ -144,10 +306,7 @@ export function AdminStudioPage() {
     try {
       const res = await fetch("/api/admin/settings", {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ settings: changes }),
       });
       if (res.ok) {
@@ -213,23 +372,88 @@ export function AdminStudioPage() {
   const iframeSrc = `${window.location.origin}${import.meta.env.BASE_URL}chats`;
 
   function renderMessageContent(content: string) {
-    return content
-      .split("\n")
-      .map((line, i) => {
-        const parts = line.split(/(\*\*[^*]+\*\*)/g);
-        return (
-          <p key={i} className={i > 0 ? "mt-1" : ""}>
-            {parts.map((p, j) =>
-              p.startsWith("**") && p.endsWith("**") ? (
-                <strong key={j}>{p.slice(2, -2)}</strong>
-              ) : (
-                <span key={j}>{p}</span>
-              )
-            )}
-          </p>
-        );
-      });
+    return content.split("\n").map((line, i) => {
+      const parts = line.split(/(\*\*[^*]+\*\*)/g);
+      return (
+        <p key={i} className={i > 0 ? "mt-1" : ""}>
+          {parts.map((p, j) =>
+            p.startsWith("**") && p.endsWith("**") ? (
+              <strong key={j}>{p.slice(2, -2)}</strong>
+            ) : (
+              <span key={j}>{p}</span>
+            )
+          )}
+        </p>
+      );
+    });
   }
+
+  const HistoryPanel = () => (
+    <div className="flex flex-col h-full bg-background md:bg-card/30">
+      <div className="flex items-center justify-between px-3 py-2.5 border-b border-border flex-shrink-0">
+        <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+          <History size={13} className="text-primary" />
+          Chat History
+        </span>
+        <Button
+          size="sm"
+          className="h-6 text-[10px] px-2 gap-1 bg-primary/20 hover:bg-primary/30 text-primary border-0"
+          onClick={startNewChat}
+        >
+          <Plus size={10} /> New Chat
+        </Button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {sessions.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-40 text-center px-4">
+            <MessageSquare size={24} className="text-muted-foreground/40 mb-2" />
+            <p className="text-[11px] text-muted-foreground">
+              Abhi koi history nahi. Chat start karo!
+            </p>
+          </div>
+        ) : (
+          <div className="py-1">
+            {sessions.map((session) => (
+              <div
+                key={session.id}
+                className={`group flex items-start gap-2 px-3 py-2.5 hover:bg-secondary/50 cursor-pointer transition-colors border-b border-border/20 ${
+                  session.id === sessionIdRef.current
+                    ? "bg-primary/8 border-l-2 border-l-primary"
+                    : ""
+                }`}
+                onClick={() => loadSession(session)}
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12px] text-foreground truncate font-medium leading-tight">
+                    {session.firstMessage || "New chat"}
+                  </p>
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    <span className="text-[10px] text-muted-foreground">
+                      {formatDate(session.createdAt)}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      · {session.messages.filter((m) => m.role === "user").length} msgs
+                    </span>
+                    {session.changesApplied.length > 0 && (
+                      <span className="text-[9px] px-1.5 py-0.5 bg-green-500/15 text-green-400 rounded-full font-medium">
+                        {session.changesApplied.length} changes
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  className="opacity-0 group-hover:opacity-100 text-muted-foreground/50 hover:text-destructive transition-all mt-0.5 p-1 rounded flex-shrink-0"
+                  onClick={(e) => deleteSession(e, session.id)}
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
@@ -252,7 +476,22 @@ export function AdminStudioPage() {
             <p className="text-[10px] text-muted-foreground leading-tight">AI Secretary · App Control</p>
           </div>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
+          {/* History toggle — desktop */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`hidden md:flex h-7 px-2 text-[11px] gap-1 relative ${showHistorySidebar ? "text-primary bg-primary/10" : "text-muted-foreground"}`}
+            onClick={() => setShowHistorySidebar((v) => !v)}
+          >
+            <History size={11} />
+            History
+            {sessions.length > 0 && (
+              <span className="w-4 h-4 bg-primary rounded-full text-[8px] text-primary-foreground flex items-center justify-center">
+                {Math.min(sessions.length, 9)}+
+              </span>
+            )}
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -261,7 +500,7 @@ export function AdminStudioPage() {
             disabled={savingSnap}
           >
             {savingSnap ? <Loader2 size={11} className="animate-spin" /> : <Camera size={11} />}
-            Snapshot
+            <span className="hidden sm:inline">Snap</span>
           </Button>
           <Button
             variant="ghost"
@@ -270,7 +509,7 @@ export function AdminStudioPage() {
             onClick={() => setShowSnapshots((v) => !v)}
           >
             <RotateCcw size={11} />
-            Rollback
+            <span className="hidden sm:inline">Rollback</span>
             <ChevronDown size={11} className={`transition-transform ${showSnapshots ? "rotate-180" : ""}`} />
           </Button>
         </div>
@@ -278,9 +517,11 @@ export function AdminStudioPage() {
 
       {/* Snapshots Dropdown */}
       {showSnapshots && (
-        <div className="border-b border-border bg-card px-3 py-2 flex-shrink-0 max-h-40 overflow-y-auto">
+        <div className="border-b border-border bg-card px-3 py-2 flex-shrink-0 max-h-44 overflow-y-auto z-10">
           {snapshots.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-2">Koi snapshot nahi hai abhi. "Snapshot" button se save karo.</p>
+            <p className="text-xs text-muted-foreground text-center py-2">
+              Koi snapshot nahi hai. Upar "Snap" button se save karo.
+            </p>
           ) : (
             <div className="space-y-1">
               <p className="text-[10px] text-muted-foreground font-semibold uppercase mb-1.5">Saved Snapshots</p>
@@ -288,7 +529,9 @@ export function AdminStudioPage() {
                 <div key={s.id} className="flex items-center justify-between gap-2 py-1">
                   <div className="min-w-0">
                     <p className="text-xs text-foreground truncate">{s.label}</p>
-                    <p className="text-[10px] text-muted-foreground">{new Date(s.createdAt).toLocaleString("en-IN")}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {new Date(s.createdAt).toLocaleString("en-IN")}
+                    </p>
                   </div>
                   <Button
                     size="sm"
@@ -307,58 +550,104 @@ export function AdminStudioPage() {
 
       {/* Mobile tabs */}
       <div className="flex md:hidden border-b border-border flex-shrink-0">
-        {(["chat", "preview"] as const).map((t) => (
+        {(["history", "chat", "preview"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setActiveTab(t)}
-            className={`flex-1 py-2 text-xs font-medium transition-colors ${
+            className={`flex-1 py-2 text-xs font-medium transition-colors relative ${
               activeTab === t ? "text-primary border-b-2 border-primary" : "text-muted-foreground"
             }`}
           >
-            {t === "chat" ? "💬 AI Chat" : "👁️ Preview"}
+            {t === "history" ? "📋 History" : t === "chat" ? "💬 AI Chat" : "👁️ Preview"}
+            {t === "history" && sessions.length > 0 && (
+              <span className="absolute top-1 right-3 w-3.5 h-3.5 bg-primary rounded-full text-[8px] text-primary-foreground flex items-center justify-center">
+                {Math.min(sessions.length, 9)}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
       {/* Main content */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left: Chat panel */}
+        {/* History sidebar — desktop only */}
         <div
-          className={`flex flex-col w-full md:w-[42%] md:border-r border-border min-h-0 ${
+          className={`hidden md:flex flex-col border-r border-border overflow-hidden transition-all duration-200 flex-shrink-0 ${
+            showHistorySidebar ? "w-56" : "w-0"
+          }`}
+        >
+          <HistoryPanel />
+        </div>
+
+        {/* History panel — mobile full screen */}
+        {activeTab === "history" && (
+          <div className="flex md:hidden flex-col flex-1 min-h-0">
+            <HistoryPanel />
+          </div>
+        )}
+
+        {/* Chat panel */}
+        <div
+          className={`flex flex-col flex-1 border-r border-border min-h-0 ${
             activeTab !== "chat" ? "hidden md:flex" : "flex"
           }`}
+          style={{ maxWidth: activeTab === "chat" ? undefined : undefined }}
         >
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
             {messages.map((msg, idx) => (
-              <div key={idx} className={`flex gap-2 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+              <div
+                key={idx}
+                className={`flex gap-2 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+              >
                 <div
                   className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5 ${
-                    msg.role === "assistant" ? "bg-primary/20 text-primary" : "bg-secondary text-foreground"
+                    msg.role === "assistant"
+                      ? "bg-primary/20 text-primary"
+                      : "bg-secondary text-foreground"
                   }`}
                 >
                   {msg.role === "assistant" ? <Bot size={13} /> : <User size={13} />}
                 </div>
-                <div className={`max-w-[80%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col gap-1`}>
-                  <div
-                    className={`px-3 py-2 rounded-2xl text-[13px] leading-relaxed ${
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground rounded-tr-sm"
-                        : "bg-card border border-border rounded-tl-sm text-foreground"
-                    }`}
-                  >
-                    {renderMessageContent(msg.content)}
-                  </div>
+                <div
+                  className={`max-w-[82%] flex flex-col gap-1 ${
+                    msg.role === "user" ? "items-end" : "items-start"
+                  }`}
+                >
+                  {/* Image preview */}
+                  {msg.imagePreview && (
+                    <img
+                      src={msg.imagePreview}
+                      alt="attached"
+                      className="max-w-[200px] rounded-xl border border-border object-cover"
+                    />
+                  )}
+                  {/* Text bubble */}
+                  {msg.content && (
+                    <div
+                      className={`px-3 py-2 rounded-2xl text-[13px] leading-relaxed ${
+                        msg.role === "user"
+                          ? "bg-primary text-primary-foreground rounded-tr-sm"
+                          : "bg-card border border-border rounded-tl-sm text-foreground"
+                      }`}
+                    >
+                      {renderMessageContent(msg.content)}
+                    </div>
+                  )}
 
-                  {/* Changes preview */}
+                  {/* Proposed changes card */}
                   {msg.changes && Object.keys(msg.changes).length > 0 && (
-                    <div className="w-full bg-primary/5 border border-primary/20 rounded-xl p-2.5 space-y-2">
+                    <div className="w-full bg-primary/5 border border-primary/25 rounded-xl p-2.5 space-y-2">
                       <p className="text-[11px] font-semibold text-primary">📋 Proposed Changes:</p>
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         {Object.entries(msg.changes).map(([k, v]) => (
-                          <div key={k} className="flex items-center gap-2">
-                            <span className="text-[11px] text-muted-foreground">{SETTING_LABELS[k] || k}:</span>
-                            <span className="text-[11px] font-mono text-foreground">{v}</span>
+                          <div key={k} className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[11px] text-muted-foreground">
+                              {SETTING_LABELS[k] || k}:
+                            </span>
+                            <span className="text-[11px] font-mono text-foreground bg-secondary px-1.5 py-0.5 rounded">
+                              {v}
+                            </span>
                             {k.endsWith("Hsl") && (
                               <div
                                 className="w-4 h-4 rounded-full border border-border flex-shrink-0"
@@ -376,7 +665,11 @@ export function AdminStudioPage() {
                             onClick={() => applyChanges(msg.changes!, idx)}
                             disabled={applyingChanges}
                           >
-                            {applyingChanges ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle2 size={10} />}
+                            {applyingChanges ? (
+                              <Loader2 size={10} className="animate-spin" />
+                            ) : (
+                              <CheckCircle2 size={10} />
+                            )}
                             Apply
                           </Button>
                           <Button
@@ -386,13 +679,13 @@ export function AdminStudioPage() {
                             onClick={() => discardChanges(idx)}
                             disabled={applyingChanges}
                           >
-                            <RotateCcw size={10} /> Discard
+                            <X size={10} /> Discard
                           </Button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5 pt-0.5">
                           <CheckCircle2 size={12} className="text-green-400" />
-                          <span className="text-[11px] text-green-400">Changes applied!</span>
+                          <span className="text-[11px] text-green-400">Applied ✓</span>
                         </div>
                       )}
                     </div>
@@ -400,13 +693,15 @@ export function AdminStudioPage() {
                 </div>
               </div>
             ))}
+
+            {/* Typing indicator */}
             {sending && (
               <div className="flex gap-2">
                 <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
                   <Bot size={13} className="text-primary" />
                 </div>
-                <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2">
-                  <div className="flex gap-1 items-center h-4">
+                <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2.5">
+                  <div className="flex gap-1 items-center">
                     {[0, 1, 2].map((i) => (
                       <div
                         key={i}
@@ -428,19 +723,65 @@ export function AdminStudioPage() {
               "App ka naam badlo",
               "Stats batao",
               "Dark theme banao",
+              "Snapshot lo",
             ].map((s) => (
               <button
                 key={s}
-                onClick={() => { setInput(s); inputRef.current?.focus(); }}
-                className="flex-shrink-0 text-[11px] px-2.5 py-1 bg-secondary rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors"
+                onClick={() => {
+                  setInput(s);
+                  inputRef.current?.focus();
+                }}
+                className="flex-shrink-0 text-[11px] px-2.5 py-1 bg-secondary rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors whitespace-nowrap"
               >
                 {s}
               </button>
             ))}
           </div>
 
+          {/* Image attachment preview */}
+          {imageAttachment && (
+            <div className="px-3 pb-1.5 flex items-center gap-2.5 flex-shrink-0">
+              <div className="relative flex-shrink-0">
+                <img
+                  src={imageAttachment.previewUrl}
+                  alt="attachment"
+                  className="h-14 w-14 rounded-xl object-cover border border-border"
+                />
+                <button
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive rounded-full flex items-center justify-center shadow"
+                  onClick={() => setImageAttachment(null)}
+                >
+                  <X size={9} className="text-white" />
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                Image attach hai.
+                <br />
+                Message type karo ya seedha send karo.
+              </p>
+            </div>
+          )}
+
           {/* Input area */}
-          <div className="px-3 pb-3 flex gap-2 flex-shrink-0">
+          <div className="px-3 pb-3 flex gap-2 items-end flex-shrink-0">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleImageSelect}
+            />
+            <button
+              className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
+                imageAttachment
+                  ? "bg-primary/20 text-primary"
+                  : "bg-secondary text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => fileInputRef.current?.click()}
+              title="Image attach karo"
+            >
+              <ImagePlus size={16} />
+            </button>
             <div className="flex-1 bg-secondary rounded-2xl flex items-end gap-2 px-3 py-2">
               <textarea
                 ref={inputRef}
@@ -459,23 +800,25 @@ export function AdminStudioPage() {
             </div>
             <Button
               size="icon"
-              className="h-10 w-10 rounded-full flex-shrink-0"
+              className="h-9 w-9 rounded-full flex-shrink-0"
               onClick={sendMessage}
-              disabled={!input.trim() || sending}
+              disabled={(!input.trim() && !imageAttachment) || sending}
             >
-              {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
             </Button>
           </div>
         </div>
 
-        {/* Right: App preview */}
+        {/* Preview panel */}
         <div
           className={`flex flex-col flex-1 min-h-0 ${
             activeTab !== "preview" ? "hidden md:flex" : "flex"
           }`}
         >
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card flex-shrink-0">
-            <span className="text-[11px] text-muted-foreground font-medium">Live Preview — {settings.appName}</span>
+            <span className="text-[11px] text-muted-foreground font-medium">
+              Live Preview — {settings.appName}
+            </span>
             <Button
               variant="ghost"
               size="icon"
@@ -489,7 +832,6 @@ export function AdminStudioPage() {
           <div className="flex-1 relative">
             <iframe
               key={previewKey}
-              ref={iframeRef}
               src={iframeSrc}
               className="absolute inset-0 w-full h-full border-0"
               title="App Preview"
