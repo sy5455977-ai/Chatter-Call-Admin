@@ -13,12 +13,13 @@ import { InvitePage }        from "./pages/invite";
 import { InviteAcceptPage }  from "./pages/invite-accept";
 import { CallPage }          from "./pages/call";
 import { AdminPage }         from "./pages/admin";
+import { AdminStudioPage }   from "./pages/admin-studio";
 import { Layout }            from "./components/layout";
+import { AppSettingsProvider } from "./lib/app-settings";
 import { getAuthToken, getAuthUser } from "./lib/auth";
 import { initWebSocket, useWebSocket, sendWsMessage } from "./lib/websocket";
 import { showNotification } from "./lib/notifications";
 
-// ── React Query client ────────────────────────────────────────────────────────
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -31,7 +32,6 @@ const queryClient = new QueryClient({
   },
 });
 
-// ── Auth guard ────────────────────────────────────────────────────────────────
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const [, setLocation] = useLocation();
   const token = getAuthToken();
@@ -42,7 +42,6 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// ── Incoming call overlay (shown globally) ────────────────────────────────────
 interface IncomingCall {
   conversationId: number;
   fromUserId:     number;
@@ -56,7 +55,6 @@ function IncomingCallBanner() {
   useWebSocket((event) => {
     const ev = event as any;
     if (ev.type === "webrtc_call_request") {
-      // Show incoming call notification
       setCall({
         conversationId: ev.conversationId,
         fromUserId:     ev.fromUserId,
@@ -76,12 +74,10 @@ function IncomingCallBanner() {
 
   const handleAccept = () => {
     setCall(null);
-    // Navigate to call page as callee (no ?caller=1)
     setLocation(`/call/${call.conversationId}`);
   };
 
   const handleDecline = () => {
-    const currentUser = getAuthUser();
     sendWsMessage({
       type:           "webrtc_call_decline",
       conversationId: call.conversationId,
@@ -117,15 +113,12 @@ function IncomingCallBanner() {
   );
 }
 
-// ── Router ────────────────────────────────────────────────────────────────────
 function Router() {
   return (
     <Switch>
-      {/* Public pages */}
       <Route path="/"              component={AuthPage} />
       <Route path="/invite/:code"  component={InviteAcceptPage} />
 
-      {/* Protected pages */}
       <Route path="/chats">
         <RequireAuth><Layout><ChatsPage /></Layout></RequireAuth>
       </Route>
@@ -144,13 +137,15 @@ function Router() {
       <Route path="/admin">
         <RequireAuth><AdminPage /></RequireAuth>
       </Route>
+      <Route path="/admin/studio">
+        <RequireAuth><AdminStudioPage /></RequireAuth>
+      </Route>
 
       <Route component={NotFound} />
     </Switch>
   );
 }
 
-// ── Root app ──────────────────────────────────────────────────────────────────
 function App() {
   useEffect(() => {
     if (getAuthToken()) initWebSocket();
@@ -159,10 +154,12 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <IncomingCallBanner />
-          <Router />
-        </WouterRouter>
+        <AppSettingsProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <IncomingCallBanner />
+            <Router />
+          </WouterRouter>
+        </AppSettingsProvider>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

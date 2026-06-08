@@ -81,7 +81,14 @@ export function AuthPage() {
     setAuthToken(data.token);
     setAuthUser(data.user as AuthUser);
     initWebSocket();
-    setLocation("/chats");
+    // Handle pending invite from invite link
+    const pendingInvite = sessionStorage.getItem("pendingInvite");
+    if (pendingInvite) {
+      sessionStorage.removeItem("pendingInvite");
+      setLocation(`/invite/${pendingInvite}`);
+    } else {
+      setLocation("/chats");
+    }
   }
 
   function onRegisterSuccess(data: { token: string; user: unknown }) {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { ArrowLeft, BarChart3, ShieldOff, Shield, Wifi, WifiOff, RefreshCw, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, BarChart3, ShieldOff, Shield, Wifi, WifiOff, RefreshCw, Eye, EyeOff, Bot } from "lucide-react";
 import {
   BarChart,
   Bar,
@@ -130,6 +130,15 @@ export function AdminPage() {
           <p className="text-[11px] text-muted-foreground">Chatter Control Center</p>
         </div>
         <span className="text-[10px] bg-destructive/20 text-destructive px-2 py-1 rounded-full font-bold">ADMIN</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="rounded-xl h-8 px-2.5 text-[11px] gap-1.5 bg-primary/10 text-primary hover:bg-primary/20 flex-shrink-0"
+          onClick={() => setLocation("/admin/studio")}
+        >
+          <Bot size={13} />
+          AI Studio
+        </Button>
         <Button
           variant="ghost"
           size="icon"
