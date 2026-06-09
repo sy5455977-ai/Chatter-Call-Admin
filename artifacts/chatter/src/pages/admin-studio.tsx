@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import {
-  ArrowLeft, Send, Loader2, Camera, CheckCircle2, RotateCcw,
-  Bot, User, ChevronDown, RefreshCw, History, ImagePlus, X,
-  MessageSquare, Plus, Trash2,
+  ArrowLeft, Send, Loader2, CheckCircle2,
+  Bot, User, RefreshCw, History, X,
+  MessageSquare, Plus, Trash2, Camera, RotateCcw, ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAuthToken } from "../lib/auth";
@@ -50,7 +50,7 @@ const STORAGE_KEY = "adminStudioHistory_v2";
 
 const WELCOME_MSG: ChatMessage = {
   role: "assistant",
-  content: `Namaste! Main hun aapka **Gemini AI Secretary** 🤖✨\n\nMujhe puri app ki knowledge hai — users, stats, settings, sab kuch. Bas bol do:\n\n🎨 **"Primary color blue kar do"** → instantly ho jaayega\n📝 **"App ka naam badal do"** → abhi badal deta hun\n🌑 **"Theme purple karo"** → done!\n📊 **"Kitne users hain?"** → sab data mere paas hai\n📸 **Image attach karo** → screenshot dekh ke suggest karunga\n💾 **"Snapshot lo"** → current state save ho jaayegi\n\nKya karna hai? Seedha bol do! 🚀`,
+  content: `Salam! Main hun aapka **Built-in AI** 🤖✨\n\nKoi API key ki zaroorat nahi — main seedha kaam karta hoon!\n\n🎨 **"Primary color blue kar do"** → instantly ho jaayega\n📝 **"App ka naam badal do"** → abhi badal deta hun\n🌑 **"Background dark purple karo"** → done!\n📊 **"Kitne users hain?"** → sab data mere paas hai\n💾 **"Snapshot lo"** → current state save ho jaayegi\n🔄 **"Reset karo"** → original settings wapas\n\nKya karna hai? Seedha bol do! 🚀`,
 };
 
 function loadSessions(): StoredSession[] {
@@ -98,19 +98,12 @@ export function AdminStudioPage() {
   const [pendingChanges, setPendingChanges] = useState<{ msgIdx: number; changes: Record<string, string> } | null>(null);
   const [applyingChanges, setApplyingChanges] = useState(false);
 
-  const [imageAttachment, setImageAttachment] = useState<{
-    base64: string;
-    mimeType: string;
-    previewUrl: string;
-  } | null>(null);
-
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [savingSnap, setSavingSnap] = useState(false);
   const [previewKey, setPreviewKey] = useState(0);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -170,7 +163,6 @@ export function AdminStudioPage() {
       }))
     );
     setPendingChanges(null);
-    setImageAttachment(null);
     setInput("");
     setShowHistorySidebar(false);
     setActiveTab("chat");
@@ -182,7 +174,6 @@ export function AdminStudioPage() {
     setMessages([WELCOME_MSG]);
     setPendingChanges(null);
     setInput("");
-    setImageAttachment(null);
     setShowHistorySidebar(false);
     setActiveTab("chat");
   };
@@ -196,44 +187,14 @@ export function AdminStudioPage() {
     });
   };
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 4 * 1024 * 1024) {
-      toast({ title: "Image too large", description: "Maximum 4MB allowed", variant: "destructive" });
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string;
-      setImageAttachment({
-        base64: dataUrl.split(",")[1],
-        mimeType: file.type,
-        previewUrl: dataUrl,
-      });
-    };
-    reader.readAsDataURL(file);
-    e.target.value = "";
-  };
-
   const sendMessage = async () => {
     const text = input.trim();
-    if ((!text && !imageAttachment) || sending) return;
+    if (!text || sending) return;
     setInput("");
-    const attachmentToSend = imageAttachment;
-    setImageAttachment(null);
-
-    const history = messages
-      .filter((m) => !m.changes || m.applied)
-      .map((m) => ({ role: m.role, content: m.content }));
 
     setMessages((prev) => [
       ...prev,
-      {
-        role: "user",
-        content: text || "Yeh image dekho",
-        imagePreview: attachmentToSend?.previewUrl,
-      },
+      { role: "user", content: text },
     ]);
     setSending(true);
 
@@ -244,29 +205,15 @@ export function AdminStudioPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          message: text || "Yeh image dekho aur batao kya update ya improve karna chahiye",
-          history,
-          image: attachmentToSend
-            ? { base64: attachmentToSend.base64, mimeType: attachmentToSend.mimeType }
-            : undefined,
-        }),
+        body: JSON.stringify({ message: text }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        let errorContent = `❌ Error: ${data.error || "Kuch galat ho gaya. Dobara try karo."}`;
-        if (data.error === "no_key") {
-          errorContent = `⚠️ **Gemini API Key nahi mili!**\n\nReplit Secrets mein **GEMINI_API_KEY** naam se key add karo.`;
-        } else if (data.error === "quota_exceeded") {
-          errorContent = `⏳ **Quota limit hit ho gayi!**\n\nGemini free tier mein limited requests hain. Kuch minutes baad dobara try karo.\n\nZyada use ke liye: [Google AI Studio](https://aistudio.google.com) mein billing enable karo.`;
-        } else if (res.status >= 500) {
-          errorContent = `🔄 **Server busy hai.** Ek baar dobara try karo.`;
-        }
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", content: errorContent },
+          { role: "assistant", content: `❌ Error: ${data.error || "Kuch galat ho gaya. Dobara try karo."}` },
         ]);
         return;
       }
@@ -719,11 +666,12 @@ export function AdminStudioPage() {
           {/* Quick suggestions */}
           <div className="px-3 pb-1.5 flex gap-1.5 overflow-x-auto flex-shrink-0 scrollbar-none">
             {[
-              "Color green kar do",
+              "Blue color kar do",
+              "Green theme lao",
               "App ka naam badlo",
               "Stats batao",
-              "Dark theme banao",
-              "Snapshot lo",
+              "Background dark purple",
+              "Reset karo",
             ].map((s) => (
               <button
                 key={s}
@@ -738,50 +686,8 @@ export function AdminStudioPage() {
             ))}
           </div>
 
-          {/* Image attachment preview */}
-          {imageAttachment && (
-            <div className="px-3 pb-1.5 flex items-center gap-2.5 flex-shrink-0">
-              <div className="relative flex-shrink-0">
-                <img
-                  src={imageAttachment.previewUrl}
-                  alt="attachment"
-                  className="h-14 w-14 rounded-xl object-cover border border-border"
-                />
-                <button
-                  className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive rounded-full flex items-center justify-center shadow"
-                  onClick={() => setImageAttachment(null)}
-                >
-                  <X size={9} className="text-white" />
-                </button>
-              </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
-                Image attach hai.
-                <br />
-                Message type karo ya seedha send karo.
-              </p>
-            </div>
-          )}
-
           {/* Input area */}
           <div className="px-3 pb-3 flex gap-2 items-end flex-shrink-0">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleImageSelect}
-            />
-            <button
-              className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
-                imageAttachment
-                  ? "bg-primary/20 text-primary"
-                  : "bg-secondary text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => fileInputRef.current?.click()}
-              title="Image attach karo"
-            >
-              <ImagePlus size={16} />
-            </button>
             <div className="flex-1 bg-secondary rounded-2xl flex items-end gap-2 px-3 py-2">
               <textarea
                 ref={inputRef}
@@ -802,7 +708,7 @@ export function AdminStudioPage() {
               size="icon"
               className="h-9 w-9 rounded-full flex-shrink-0"
               onClick={sendMessage}
-              disabled={(!input.trim() && !imageAttachment) || sending}
+              disabled={!input.trim() || sending}
             >
               {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
             </Button>

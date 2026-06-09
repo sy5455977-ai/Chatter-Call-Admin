@@ -4,6 +4,7 @@ import { eq, desc } from "drizzle-orm";
 import { authMiddleware } from "../middlewares/auth";
 import type { AuthPayload } from "../middlewares/auth";
 import { DEFAULT_SETTINGS } from "./settings";
+import { processCommand } from "../lib/localAI";
 
 const ADMIN_EMAIL = "sy5455977@gmail.com";
 const router = Router();
@@ -181,27 +182,14 @@ router.post("/admin/settings/rollback/:id", authMiddleware, adminMiddleware, asy
   }
 });
 
-// ── AI Secretary Chat (Gemini) ────────────────────────────────────────────────
+// ── Built-in AI (No external API needed) ─────────────────────────────────────
 
 router.post("/admin/ai-chat", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      res.status(503).json({
-        error: "no_key",
-        message: "Gemini API key not configured. Please add GEMINI_API_KEY in Replit Secrets.",
-      });
-      return;
-    }
+    const { message } = req.body as { message: string };
 
-    const { message, history = [], image } = req.body as {
-      message: string;
-      history: Array<{ role: "user" | "assistant"; content: string }>;
-      image?: { base64: string; mimeType: string };
-    };
-
-    if (!message?.trim() && !image) {
-      res.status(400).json({ error: "message or image required" });
+    if (!message?.trim()) {
+      res.status(400).json({ error: "message required" });
       return;
     }
 
@@ -212,107 +200,20 @@ router.post("/admin/ai-chat", authMiddleware, adminMiddleware, async (req, res) 
         .from(usersTable),
     ]);
 
-    const totalUsers = userRows.length;
-    const onlineUsers = userRows.filter((u) => u.isOnline).length;
-    const bannedUsers = userRows.filter((u) => u.isBanned).length;
-    const totalMsgs = statsRows.reduce((s, d) => s + d.messageCount, 0);
+    const result = processCommand(message, {
+      settings: currentSettings,
+      totalUsers: userRows.length,
+      onlineUsers: userRows.filter((u) => u.isOnline).length,
+      bannedUsers: userRows.filter((u) => u.isBanned).length,
+      totalMessages: statsRows.reduce((s, d) => s + d.messageCount, 0),
+      recentStats: statsRows.map((s) => ({
+        date: s.date instanceof Date ? s.date.toISOString().slice(0, 10) : String(s.date),
+        loginCount: s.loginCount,
+        messageCount: s.messageCount,
+      })),
+    });
 
-    const systemPrompt = `You are the Admin AI Secretary for "${currentSettings.appName}", a real-time chat application. You are an extremely intelligent and helpful assistant who can fully customize and control this app — just like a Replit AI assistant.
-
-CURRENT APP STATS:
-- Total users: ${totalUsers}
-- Online now: ${onlineUsers}
-- Banned users: ${bannedUsers}
-- Messages (last 7 days): ${totalMsgs}
-
-CURRENT SETTINGS:
-${Object.entries(currentSettings).map(([k, v]) => `- ${k}: ${v}`).join("\n")}
-
-WHAT YOU CAN CHANGE (use CHANGES block when making changes):
-- primaryHsl: Main accent/button color in HSL format. Examples: "120 60% 45%" (green), "210 80% 55%" (blue), "0 75% 50%" (red), "280 65% 55%" (purple), "45 68% 47%" (gold/default)
-- backgroundHsl: App background. Examples: "220 30% 6%" (dark blue-black), "0 0% 5%" (pure dark), "240 25% 7%" (dark purple-black)
-- cardHsl: Card/panel color. Should be slightly lighter than background. Examples: "220 30% 9%", "0 0% 8%"
-- appName: The app's display name (any string)
-- tagline: Subtitle on login page (any string)
-
-RESPONSE FORMAT RULES:
-1. Reply conversationally in Hindi/English mix (Hinglish) — be warm and friendly.
-2. When the user asks you to make ANY visual or setting change, DO IT immediately and confidently.
-3. If making changes, end your message with this EXACT block (no space between CHANGES: and the JSON):
-CHANGES:{"key":"value"}
-4. Only add CHANGES block when actually changing something.
-5. HSL format: "H S% L%" — always include % signs on S and L values.
-6. Be smart: if user says "green karo" pick a nice green like "142 70% 45%", if "blue karo" use "210 80% 55%", etc.
-7. Keep the dark theme feel — don't make backgrounds too light.
-8. You can change multiple settings at once in one CHANGES block.
-
-You are powerful, knowledgeable, and proactive. Answer questions about the app, suggest improvements, and execute changes confidently.`;
-
-    // Convert history to Gemini format (user/model roles)
-    const geminiContents: any[] = history.slice(-12).map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
-
-    // Build final user message parts (image first, then text)
-    const lastParts: any[] = [];
-    if (image?.base64 && image?.mimeType) {
-      lastParts.push({ inlineData: { mimeType: image.mimeType, data: image.base64 } });
-    }
-    lastParts.push({ text: message?.trim() || "Yeh image dekho aur batao kya update ya improve karna chahiye." });
-    geminiContents.push({ role: "user", parts: lastParts });
-
-    const geminiBody = {
-      system_instruction: { parts: [{ text: systemPrompt }] },
-      contents: geminiContents,
-      generationConfig: {
-        maxOutputTokens: 1024,
-        temperature: 0.7,
-      },
-    };
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiBody),
-      }
-    );
-
-    if (!response.ok) {
-      const errText = await response.text();
-      req.log.error({ status: response.status, body: errText }, "Gemini API error");
-      if (response.status === 429) {
-        res.status(429).json({
-          error: "quota_exceeded",
-          message: "Free tier quota limit hit. Please wait a few minutes and try again, or enable billing on Google AI Studio.",
-        });
-        return;
-      }
-      if (response.status === 400) {
-        res.status(400).json({ error: "Invalid request. Image size too large ya unsupported format." });
-        return;
-      }
-      res.status(502).json({ error: "AI service temporarily unavailable. Please try again." });
-      return;
-    }
-
-    const data = await response.json() as any;
-    const rawText: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-
-    let text = rawText;
-    let changes: Record<string, string> | null = null;
-
-    const changesMatch = rawText.match(/CHANGES:\s*(\{[\s\S]*?\})\s*$/m);
-    if (changesMatch) {
-      try {
-        changes = JSON.parse(changesMatch[1]);
-        text = rawText.slice(0, changesMatch.index).trim();
-      } catch {}
-    }
-
-    res.json({ text, changes });
+    res.json({ text: result.text, changes: result.changes });
   } catch (err) {
     req.log.error(err, "admin ai-chat error");
     res.status(500).json({ error: "Internal server error" });
